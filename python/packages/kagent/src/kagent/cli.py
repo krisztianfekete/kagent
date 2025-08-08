@@ -38,9 +38,9 @@ def static(
 ):
     tracing_enabled = os.getenv("OTEL_TRACING_ENABLED", "false").lower() == "true"
     logging_enabled = os.getenv("OTEL_LOGGING_ENABLED", "false").lower() == "true"
-    
+
     resource = Resource({"service.name": "kagent"})
-    
+
     # Configure tracing if enabled
     if tracing_enabled:
         logging.info("Enabling tracing")
@@ -54,28 +54,28 @@ def static(
         tracer_provider.add_span_processor(processor)
         trace.set_tracer_provider(tracer_provider)
         HTTPXClientInstrumentor().instrument()
-    
+
     # Configure logging if enabled
     if logging_enabled:
         logging.info("Enabling logging for GenAI events")
         logger_provider = LoggerProvider(resource=resource)
         log_endpoint = os.getenv("OTEL_LOGGING_EXPORTER_OTLP_ENDPOINT")
         logging.info(f"Log endpoint configured: {log_endpoint}")
-        
+
         # Add OTLP exporter
         if log_endpoint:
             log_processor = BatchLogRecordProcessor(OTLPLogExporter(endpoint=log_endpoint))
         else:
             log_processor = BatchLogRecordProcessor(OTLPLogExporter())
         logger_provider.add_log_record_processor(log_processor)
-        
+
         # Add console exporter for debugging
         console_processor = BatchLogRecordProcessor(ConsoleLogExporter())
         logger_provider.add_log_record_processor(console_processor)
-        
+
         _logs.set_logger_provider(logger_provider)
         logging.info("Log provider configured with OTLP and console exporters")
-    
+
     # Configure OpenAI instrumentation based on logging preference
     if tracing_enabled or logging_enabled:
         if logging_enabled:
@@ -83,9 +83,7 @@ def static(
             logging.info("OpenAI instrumentation configured with event logging capability")
             # Create event logger provider using the configured logger provider
             event_logger_provider = EventLoggerProvider(get_logger_provider())
-            OpenAIInstrumentor(use_legacy_attributes=False).instrument(
-                event_logger_provider=event_logger_provider
-            )
+            OpenAIInstrumentor(use_legacy_attributes=False).instrument(event_logger_provider=event_logger_provider)
         else:
             # Use legacy attributes (input/output as GenAI span attributes)
             logging.info("OpenAI instrumentation configured with legacy GenAI span attributes")
