@@ -14,3 +14,9 @@ spec:
             secretKeyRef:
               name: kagent-google
               key: GOOGLE_API_KEY
+        # Enable OpenTelemetry tracing
+        - name: OTEL_TRACING_ENABLED
+          value: "true"
+        - name: OTEL_TRACING_EXPORTER_OTLP_ENDPOINT
+          value: "http://jaeger-collector.jaeger.svc.cluster.local:4317"
+
