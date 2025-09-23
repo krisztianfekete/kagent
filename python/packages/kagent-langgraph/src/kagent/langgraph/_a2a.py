@@ -14,8 +14,7 @@ from a2a.types import AgentCard
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
-from kagent.core import KAgentConfig
-from kagent.core import configure_tracing as _configure_tracing
+from kagent.core import KAgentConfig, configure_tracing
 from kagent.core.a2a import KAgentRequestContextBuilder, KAgentTaskStore
 from langgraph.graph.state import CompiledStateGraph
 
@@ -122,7 +121,7 @@ class KAgentApp:
         # Configure tracing/instrumentation if enabled
         if self._enable_tracing:
             try:
-                _configure_tracing(app)
+                configure_tracing(app)
                 logger.info("Tracing configured for KAgent LangGraph app")
             except Exception:
                 logger.exception("Failed to configure tracing")
