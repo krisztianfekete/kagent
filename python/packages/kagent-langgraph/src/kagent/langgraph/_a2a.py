@@ -15,11 +15,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
 from kagent.core import KAgentConfig
+from kagent.core import configure_tracing as _configure_tracing
 from kagent.core.a2a import KAgentRequestContextBuilder, KAgentTaskStore
 from langgraph.graph.state import CompiledStateGraph
 
 from ._executor import LangGraphAgentExecutor, LangGraphAgentExecutorConfig
-from kagent.core import configure_tracing as _configure_tracing
 
 # --- Configure Logging ---
 logger = logging.getLogger(__name__)
