@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 
 [manifest]
@@ -363,7 +363,6 @@ dependencies = [
     { name = "langgraph" },
     { name = "langgraph-checkpoint-sqlite" },
     { name = "langsmith", extra = ["otel"] },
-    { name = "opentelemetry-instrumentation-google-generativeai" },
 ]
 
 [package.metadata]
@@ -374,7 +373,6 @@ requires-dist = [
     { name = "langgraph", specifier = ">=0.2.0" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=2.0.0" },
     { name = "langsmith", extras = ["otel"], specifier = ">=0.4.30" },
-    { name = "opentelemetry-instrumentation-google-generativeai", specifier = ">=0.47.3" },
 ]
 
 [[package]]
@@ -1289,6 +1287,7 @@ dependencies = [
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
     { name = "opentelemetry-instrumentation-anthropic" },
     { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-instrumentation-google-generativeai" },
     { name = "opentelemetry-instrumentation-httpx" },
     { name = "opentelemetry-instrumentation-openai" },
     { name = "opentelemetry-sdk" },
@@ -1301,6 +1300,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.36.0" },
     { name = "opentelemetry-instrumentation-anthropic", specifier = ">=0.44.0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.52.0" },
+    { name = "opentelemetry-instrumentation-google-generativeai", specifier = ">=0.47.3" },
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.52.0" },
     { name = "opentelemetry-instrumentation-openai", specifier = ">=0.44.3" },
     { name = "opentelemetry-sdk", specifier = ">=1.36.0" },
