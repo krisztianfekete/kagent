@@ -16,13 +16,7 @@ from a2a.server.request_handlers import DefaultRequestHandlerV2
 from a2a.server.routes import add_a2a_routes_to_fastapi, create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCard
-from agents import (
-    Agent,
-    set_default_openai_api,
-    set_default_openai_client,
-    set_trace_processors,
-    set_tracing_disabled,
-)
+from agents import Agent, set_default_openai_api, set_default_openai_client, set_tracing_disabled
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from google.protobuf.json_format import ParseDict
@@ -97,15 +91,13 @@ def _configure_openai_agents_tracing() -> None:
 
     KAGENT_OPENAI_AGENTS_NATIVE_TRACING=true keeps it, for real OpenAI platform keys.
     """
-    if os.getenv("KAGENT_OPENAI_AGENTS_NATIVE_TRACING", "false").strip().lower() == "true":
+    keep_native = os.getenv("KAGENT_OPENAI_AGENTS_NATIVE_TRACING", "false").strip().lower() == "true"
+    if keep_native:
         logger.info("Keeping the OpenAI Agents SDK native trace exporter alongside OpenTelemetry")
     else:
-        # The dropped BatchTraceProcessor starts its worker thread only on first
-        # enqueue, so nothing is ever sent to api.openai.com.
-        set_trace_processors([])
-        logger.info("Disabled the OpenAI Agents SDK native trace exporter; traces are exported via OpenTelemetry")
+        logger.info("Disabling the OpenAI Agents SDK native trace exporter; traces are exported via OpenTelemetry")
 
-    OpenAIAgentsInstrumentor().instrument()
+    OpenAIAgentsInstrumentor(replace_existing_processors=not keep_native).instrument()
 
     if os.getenv("OPENAI_AGENTS_DISABLE_TRACING", "false").strip().lower() in ("true", "1"):
         logger.warning(
@@ -156,7 +148,7 @@ class KAgentApp:
 
         # Create HTTP client with KAgent backend
         http_client = httpx.AsyncClient(
-            base_url=kagent_url_override or self.config.kagent_url,
+            base_url=kagent_url_override or self.config.url,
         )
 
         # Create session factory
@@ -201,8 +193,11 @@ class KAgentApp:
                 # OpenAIInstrumentor, whose SDK monkeypatch breaks Agents SDK streaming.
                 logger.info("Configuring tracing for KAgent OpenAI app")
                 configure_tracing(self.config.name, self.config.namespace, app, instrument_openai_client=False)
+                logger.info("Tracing configured for KAgent OpenAI app")
+            except Exception as e:
+                logger.error(f"Failed to configure tracing: {e}")
 
-                # Configure tracing for OpenAI Agents SDK
+            try:
                 tracing_enabled = os.getenv("OTEL_TRACING_ENABLED", "false").lower() == "true"
                 if tracing_enabled:
                     logger.info("Enabling OpenAI Agents SDK tracing")
@@ -210,10 +205,8 @@ class KAgentApp:
                 else:
                     logger.info("Disabling OpenAI Agents SDK tracing")
                     set_tracing_disabled(True)
-
-                logger.info("Tracing configured for KAgent OpenAI app")
             except Exception as e:
-                logger.error(f"Failed to configure tracing: {e}")
+                logger.error(f"Failed to configure OpenAI Agents SDK tracing: {e}")
 
         # Add health check endpoints
         app.add_route("/health", methods=["GET"], route=health_check)

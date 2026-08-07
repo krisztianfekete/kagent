@@ -50,6 +50,20 @@ def test_native_exporter_dropped_by_default():
     assert [type(p) for p in processors] == [OpenTelemetryTracingProcessor]
 
 
+def test_repeat_configuration_keeps_opentelemetry_processor():
+    """BaseInstrumentor.instrument() no-ops once instrumented.
+
+    Anything that cleared processors outside _instrument would wipe the
+    OpenTelemetry processor on a second call with nothing to reinstall it.
+    """
+    _configure_openai_agents_tracing()
+    _configure_openai_agents_tracing()
+
+    processors = _processors()
+    assert not _exports_to_openai(processors)
+    assert [type(p) for p in processors] == [OpenTelemetryTracingProcessor]
+
+
 def test_spans_still_reach_opentelemetry():
     """Dropping the native exporter must not disable SDK tracing altogether."""
     _configure_openai_agents_tracing()
@@ -65,6 +79,40 @@ def test_native_exporter_kept_when_opted_in(monkeypatch):
     processors = _processors()
     assert _exports_to_openai(processors)
     assert any(isinstance(p, OpenTelemetryTracingProcessor) for p in processors)
+
+
+def test_build_drops_native_exporter_even_if_configure_tracing_fails(monkeypatch):
+    """A broken OTLP setup must not leave the SDK shipping traces to OpenAI."""
+    from agents import Agent
+    from kagent.core import KAgentConfig
+
+    from kagent.openai import _a2a
+
+    monkeypatch.setenv("OTEL_TRACING_ENABLED", "true")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("no collector")
+
+    monkeypatch.setattr(_a2a, "configure_tracing", boom)
+
+    agent_card = {
+        "name": "test",
+        "description": "test agent",
+        "version": "0.0.1",
+        "supportedInterfaces": [{"url": "http://localhost:8080", "protocolBinding": "JSONRPC"}],
+        "capabilities": {"streaming": True},
+        "defaultInputModes": ["text/plain"],
+        "defaultOutputModes": ["text/plain"],
+        "skills": [],
+    }
+    app = _a2a.KAgentApp(
+        agent=Agent(name="test"),
+        agent_card=agent_card,
+        config=KAgentConfig(url="http://localhost", name="test", namespace="test"),
+    )
+    app.build()
+
+    assert not _exports_to_openai(_processors())
 
 
 def test_warns_when_sdk_tracing_disabled_by_env(monkeypatch, caplog):

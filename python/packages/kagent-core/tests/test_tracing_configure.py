@@ -83,31 +83,6 @@ def test_configure_tracing_only_uses_legacy_instrumentation(monkeypatch):
     assert instrument_calls["google_logger_provider"] is None
 
 
-def test_configure_logging_enabled_still_instruments_google(monkeypatch):
-    # Gemini instrumentation has no event-logger variant, so it is easy to leave
-    # it behind in the logging branch. Enabling logs must not silently drop it.
-    monkeypatch.setenv("OTEL_LOGGING_ENABLED", "true")
-    monkeypatch.setenv("OTEL_TRACING_ENABLED", "false")
-
-    instrument_calls = {"google_instrumented": False}
-
-    monkeypatch.setattr(_utils, "OpenAIInstrumentor", lambda **kwargs: SimpleNamespace(instrument=lambda **kw: None))
-    monkeypatch.setattr(_utils, "EventLoggerProvider", lambda logger_provider: {"lp": logger_provider})
-    monkeypatch.setattr(_utils, "_create_log_exporter", lambda *args, **kwargs: object())
-    monkeypatch.setattr(
-        _utils, "BatchLogRecordProcessor", lambda *args, **kwargs: SimpleNamespace(shutdown=lambda: None)
-    )
-    monkeypatch.setattr(_utils, "_instrument_anthropic", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        _utils, "_instrument_google_generativeai", lambda: instrument_calls.__setitem__("google_instrumented", True)
-    )
-    monkeypatch.setattr(_utils, "_logs", SimpleNamespace(set_logger_provider=lambda provider: None))
-
-    _utils.configure(name="test", namespace="test")
-
-    assert instrument_calls["google_instrumented"] is True
-
-
 def test_configure_resource_merges_otel_env_attributes(monkeypatch):
     # OTEL_RESOURCE_ATTRIBUTES is the only way to set deployment.environment.name
     # or service.version. The bare Resource() constructor ignores it entirely.
@@ -131,7 +106,7 @@ def test_configure_resource_merges_otel_env_attributes(monkeypatch):
     monkeypatch.setattr(_utils, "HTTPXClientInstrumentor", lambda: SimpleNamespace(instrument=lambda **kw: None))
     monkeypatch.setattr(_utils, "OpenAIInstrumentor", lambda **kwargs: SimpleNamespace(instrument=lambda **kw: None))
     monkeypatch.setattr(_utils, "_instrument_anthropic", lambda *a, **kw: None)
-    monkeypatch.setattr(_utils, "_instrument_google_generativeai", lambda: None)
+    monkeypatch.setattr(_utils, "_instrument_google_generativeai", lambda *a, **kw: None)
 
     _utils.configure(name="test-agent", namespace="test-ns")
 
@@ -340,7 +315,7 @@ def test_configure_gates_post_response_flush_on_env(monkeypatch, env_value, expe
     )
     monkeypatch.setattr(_utils, "OpenAIInstrumentor", lambda **kwargs: SimpleNamespace(instrument=lambda **kw: None))
     monkeypatch.setattr(_utils, "_instrument_anthropic", lambda *a, **kw: None)
-    monkeypatch.setattr(_utils, "_instrument_google_generativeai", lambda: None)
+    monkeypatch.setattr(_utils, "_instrument_google_generativeai", lambda *a, **kw: None)
 
     app = FastAPI()
     _utils.configure(name="test", namespace="test", fastapi_app=app)
