@@ -16,7 +16,13 @@ from a2a.server.request_handlers import DefaultRequestHandlerV2
 from a2a.server.routes import add_a2a_routes_to_fastapi, create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCard
-from agents import Agent, set_default_openai_api, set_default_openai_client, set_tracing_disabled
+from agents import (
+    Agent,
+    set_default_openai_api,
+    set_default_openai_client,
+    set_trace_processors,
+    set_tracing_disabled,
+)
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from google.protobuf.json_format import ParseDict
@@ -78,6 +84,35 @@ def _configure_openai_client() -> None:
         # By default it uses the OpenAI responses API but this is not supported for most other providers
         set_default_openai_api("chat_completions")
         logger.info(f"Configured OpenAI client with base URL: {openai_api_base}")
+
+
+def _configure_openai_agents_tracing() -> None:
+    """Export OpenAI Agents SDK traces through OpenTelemetry only.
+
+    The SDK's built-in processor POSTs to a hardcoded https://api.openai.com/v1/traces/ingest
+    using OPENAI_API_KEY, ignoring OPENAI_API_BASE, so agents behind an OpenAI-compatible
+    gateway (Azure AI Foundry, LiteLLM, ...) send that gateway's key to OpenAI and get 401s.
+    The instrumentor adds its processor alongside that one, and set_tracing_disabled(True)
+    would silence the OpenTelemetry spans too, so drop the built-in processor instead.
+
+    KAGENT_OPENAI_AGENTS_NATIVE_TRACING=true keeps it, for real OpenAI platform keys.
+    """
+    if os.getenv("KAGENT_OPENAI_AGENTS_NATIVE_TRACING", "false").strip().lower() == "true":
+        logger.info("Keeping the OpenAI Agents SDK native trace exporter alongside OpenTelemetry")
+    else:
+        # The dropped BatchTraceProcessor starts its worker thread only on first
+        # enqueue, so nothing is ever sent to api.openai.com.
+        set_trace_processors([])
+        logger.info("Disabled the OpenAI Agents SDK native trace exporter; traces are exported via OpenTelemetry")
+
+    OpenAIAgentsInstrumentor().instrument()
+
+    if os.getenv("OPENAI_AGENTS_DISABLE_TRACING", "false").strip().lower() in ("true", "1"):
+        logger.warning(
+            "OPENAI_AGENTS_DISABLE_TRACING is set, which switches off the Agents SDK tracing that the "
+            "OpenTelemetry instrumentation feeds on, so no agent spans will be exported. Unset it and rely "
+            "on KAGENT_OPENAI_AGENTS_NATIVE_TRACING=false (the default) to keep traces away from OpenAI."
+        )
 
 
 class KAgentApp:
@@ -171,7 +206,7 @@ class KAgentApp:
                 tracing_enabled = os.getenv("OTEL_TRACING_ENABLED", "false").lower() == "true"
                 if tracing_enabled:
                     logger.info("Enabling OpenAI Agents SDK tracing")
-                    OpenAIAgentsInstrumentor().instrument()
+                    _configure_openai_agents_tracing()
                 else:
                     logger.info("Disabling OpenAI Agents SDK tracing")
                     set_tracing_disabled(True)
