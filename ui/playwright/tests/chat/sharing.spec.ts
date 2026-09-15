@@ -1,5 +1,6 @@
 import { expect, test } from "../../fixtures/test";
 import { agentChat, instances } from "../../helpers/app";
+import { pressOnce } from "../../helpers/resource";
 
 /**
  * Sharing a conversation: create a link, see it listed, revoke it, open one.
@@ -21,7 +22,7 @@ const CONVERSATION = agentChat(instances.ready);
 /** A link issued before this tab opened — see `SEEDED_INSTANCE_SHARE` in the mock. */
 const SEEDED_LINK = `/shared/agent/${instances.ready}/mock-instance-token-seed`;
 
-test("sharing: a link is created, shown once, listed and revoked", async ({ page }) => {
+test("chat sharing: a link is created, shown once, listed and revoked", async ({ page }) => {
   await page.goto(CONVERSATION);
 
   await test.step("1. sharing is offered on a conversation", async () => {
@@ -40,7 +41,13 @@ test("sharing: a link is created, shown once, listed and revoked", async ({ page
   });
 
   await test.step("3. a created link is shown once, and says so", async () => {
-    await page.getByTestId("share-create").click();
+    /*
+     * Once, and only once: every answer to this button issues another share, so a retry
+     * would put a second link in the list and fail the count below rather than here.
+     * The dialog opened a step ago and antd is still zooming it in, which is the window
+     * in which a click is computed against geometry it no longer has.
+     */
+    await pressOnce(page.getByTestId("share-create"));
 
     const fresh = page.getByTestId("share-fresh-link");
     await expect(fresh).toBeVisible({ timeout: 15_000 });
@@ -77,7 +84,7 @@ test("sharing: a link is created, shown once, listed and revoked", async ({ page
   });
 });
 
-test("sharing: a link issued earlier opens the conversation, read-only", async ({
+test("chat sharing: a link issued earlier opens the conversation, read-only", async ({
   page,
 }) => {
   await test.step("1. it opens and says what it is", async () => {
@@ -105,7 +112,7 @@ test("sharing: a link issued earlier opens the conversation, read-only", async (
   });
 });
 
-test("sharing: a token the backend never issued is refused", async ({ page }) => {
+test("chat sharing: a token the backend never issued is refused", async ({ page }) => {
   // The assertion that makes the one above mean something: the fixture refuses a
   // token it cannot resolve, exactly as the controller does. Without it, a build
   // that mangled the token would serve the conversation anyway and the miss would
@@ -116,7 +123,7 @@ test("sharing: a token the backend never issued is refused", async ({ page }) =>
   await expect(page.getByTestId("shared-agent-transcript")).toHaveCount(0);
 });
 
-test("sharing: a link that allows replies offers a way to reply", async ({ page }) => {
+test("chat sharing: a link that allows replies offers a way to reply", async ({ page }) => {
   /*
    * The permission was grantable and had no effect.
    *

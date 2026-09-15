@@ -1,6 +1,5 @@
 import { test, expect } from "../../fixtures/test";
 import {
-  agentChat,
   agentNewChat,
   agentPage,
   agents,
@@ -13,12 +12,20 @@ import {
   routes,
 } from "../../helpers/app";
 import { tick } from "../../helpers/controls";
+import { confirmation, pressOnce, pressUntil } from "../../helpers/resource";
 
 /**
- * One agent, and the conversations people have had with it.
+ * An agent's own page — the surface between the agents list and a chat.
  *
- * The surface between the agents list and a chat. Three things about it are worth
- * pinning, and each is a claim a screenshot cannot check:
+ * Named for the page rather than for conversations, because a conversation shows up
+ * on three surfaces and only one of them is here: this page's table, the rail on the
+ * chat page, and the transcript in the middle of it. The folder is the surface, so
+ * "which spec owns this" has an answer — see `README.md`. **This file owns renaming
+ * and deleting a conversation**; the rail keeps one test for doing either without
+ * leaving the conversation, which is the only thing that table cannot say.
+ *
+ * Three things about the page are worth pinning, and each is a claim a screenshot
+ * cannot check:
  *
  * - **The list is this agent's conversations, narrowed by the server.** Two agents
  *   cut from one template must not show each other's, and `ListAgentInstances` takes
@@ -107,19 +114,27 @@ test("agents: a conversation is named by the reader, and never renders as a bare
   });
 
   await test.step("3. renaming one changes what the list shows", async () => {
-    await page.getByTestId(`conversation-rename-${instances.suspended}`).click();
+    /*
+     * Both clicks pressed until they take: the rename dialog animates in, and a click
+     * aimed at it mid-transition is dropped. That reports as "the list never showed the
+     * new name", which points at the save rather than at the press that never landed.
+     */
+    const rename = page.getByTestId("conversation-rename-input");
+    await pressUntil(page.getByTestId(`conversation-rename-${instances.suspended}`), () =>
+      expect(rename).toBeVisible(),
+    );
     // The box opens *empty* for an unnamed conversation rather than pre-filled with
     // the placeholder, or clearing a title would be impossible: saving would turn an
     // honest "Untitled" into a literal one.
-    const field = page.getByTestId("conversation-rename-input").locator("input");
+    const field = rename.locator("input");
     await expect(field).toHaveValue("");
 
     await field.fill("Rollback rehearsal");
-    await page.getByRole("button", { name: "Save" }).click();
-
     // The list is the proof, not the toast: a success message says the app thinks it
     // worked, and a rename that failed would still show one on a broken backend.
-    await expect(rowNamed(page, "Rollback rehearsal")).toHaveCount(1);
+    await pressUntil(page.getByRole("button", { name: "Save" }), () =>
+      expect(rowNamed(page, "Rollback rehearsal")).toHaveCount(1),
+    );
     await expect(
       page.getByTestId(`conversation-link-${instances.suspended}`),
     ).toHaveText("Rollback rehearsal");
@@ -145,44 +160,13 @@ test("agents: a conversation is named by the reader, and never renders as a bare
     const field = page.getByTestId("conversation-rename-input").locator("input");
     await expect(field).toHaveValue("Rollback rehearsal");
     await field.fill("");
-    await page.getByRole("button", { name: "Save" }).click();
+    // Once the box has stopped arriving, for the reason the delete step below gives.
+    await pressOnce(page.getByRole("button", { name: "Save" }));
 
     await expect(
       page.getByTestId(`conversation-link-${instances.suspended}`),
     ).toContainText("Untitled");
   });
-});
-
-/**
- * Auto-titling, which is the other half of naming a conversation.
- *
- * Its own test rather than a step, because it needs a different seed state: a
- * conversation nobody has named that nonetheless has something said in it. Every
- * other seeded transcript belongs to a *named* conversation, where the stored name
- * wins and this path is unreachable.
- *
- * And it is asserted on the chat page deliberately. Deriving a title needs the
- * conversation's transcript; this page has it because it is rendering it, while a
- * *list* would pay a read per row to do the same — so a list falls back to the id
- * and says so. Claiming otherwise would be promising a feature that costs a round
- * trip per row to deliver.
- */
-test("agents: an unnamed conversation is titled from its first message where that is free", async ({
-  page,
-}) => {
-  await loadPage(page, agentChat("2b6e0c45-8a71-4f39-9d02-3c85f1a7e6d0"));
-  await expect(page.getByTestId("chat-panel")).toBeVisible();
-
-  // In the conversation list, which is where conversations are named. The card above
-  // it names the *agent* — the pair being switched between — not this conversation.
-  const row = page.getByTestId("chat-session-2b6e0c45-8a71-4f39-9d02-3c85f1a7e6d0");
-  await expect(row).toContainText("Summarise last night's deploy");
-  // A title, not the message: cut at a word boundary with an ellipsis, which is what
-  // says it is a summary rather than the text itself.
-  await expect(row).toContainText("…");
-  // And emphatically not the id, which is what an unnamed conversation falls back to
-  // when there is nothing said in it to derive from.
-  await expect(row).not.toContainText("Untitled");
 });
 
 /**
@@ -477,9 +461,17 @@ test("agents: deleting an agent says what goes with it, and takes both halves", 
   });
 
   await test.step("2. confirming removes this reader's conversations", async () => {
-    // Scoped to the open popconfirm: every row carries a delete, so an unscoped match
-    // answers a prompt nobody is looking at.
-    await page.locator(".ant-popover:visible").getByRole("button", { name: "Delete" }).click();
+    /*
+     * The same `DeleteResourceButton` every resource spec drives, so the same helper for
+     * finding its prompt: `confirmation` scopes to the open one, because every row
+     * carries a delete and an unscoped match answers a prompt nobody is looking at.
+     *
+     * Pressed once it has stopped arriving — a popconfirm zooms in like a modal, and a
+     * click computed mid-animation lands where the button no longer is. Once rather than
+     * until it takes: a retry would go out after the prompt closed, onto the list under
+     * it.
+     */
+    await pressOnce(confirmation(page).getByRole("button", { name: "Delete" }));
     await page.waitForURL(/\/agents(\?|$)/, { timeout: 30_000 });
     await expectSettled(page);
     // The agent is still listed, because somebody else's conversations are still under
@@ -518,8 +510,11 @@ test("agents: conversations can be picked and deleted together from the table to
   });
 
   await test.step("3. and deleting says what goes with it", async () => {
+    const prompt = confirmation(page);
+    // Clicked once, not pressed until: this is the popconfirm's own trigger, and a
+    // retry closes what the first press opened.
     await page.getByTestId("delete-1 selected").click();
-    const prompt = page.locator(".ant-popover:visible");
+    await expect(prompt).toBeVisible();
     await expect(prompt).toContainText("can be recovered");
     // The reason it matters here rather than only being tidy.
     await expect(prompt).toContainText("workers they hold");
