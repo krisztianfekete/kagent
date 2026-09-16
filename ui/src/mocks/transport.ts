@@ -1,3 +1,5 @@
+import { ActorState, SandboxClass, type WorkerSchema, type ActorSchema } from "@/generated/ateapi_pb";
+import type { ActorTemplateSchema } from "@/generated/ateapi_pb";
 import { ScheduledRunService, ScheduledRunSchema, ScheduledRunExecutionSchema, ScheduledRunExecutionState, type ScheduledRun } from "@/generated/kagent/api/v1alpha1/scheduled_runs_pb";
 /**
  * The mock backend, as a gRPC transport.
@@ -81,7 +83,9 @@ import { AgentTemplateService } from "@/generated/kagent/api/v1alpha1/agent_temp
 import { ModelService } from "@/generated/kagent/api/v1alpha1/models_pb";
 import { ToolService } from "@/generated/kagent/api/v1alpha1/tools_pb";
 import { PromptTemplateService } from "@/generated/kagent/api/v1alpha1/prompts_pb";
-import { SystemService } from "@/generated/kagent/api/v1alpha1/system_pb";
+import {
+  SystemService,
+} from "@/generated/kagent/api/v1alpha1/system_pb";
 import {
   CheckpointService,
   CheckpointState as PbCheckpointState,
@@ -102,6 +106,12 @@ import type {
 import type { Harness } from "@/api/domain/harnesses";
 import type { AgentTemplate } from "@/api/domain/agentTemplates";
 import type { AgentInstanceShare } from "@/api/domain/agentInstances";
+import type {
+  SubstrateActorEntry,
+  SubstrateActorTemplateEntry,
+  SubstrateWorkerEntry,
+  SubstrateWorkerPoolEntry,
+} from "@/api/domain/substrate";
 import type { ModelConfig, ModelConfigSpec } from "@/api/domain/models";
 import type { PromptTemplateDetail } from "@/api/domain/prompts";
 import {
@@ -115,7 +125,7 @@ import {
   mockNamespaces,
   mockProviderModels,
   mockProviders,
-  mockSubstrateStatus,
+  mockSubstrateInventory,
   mockTools,
 } from "./fixtures";
 import {
@@ -1308,80 +1318,185 @@ on(SystemService.method.listNamespaces, (_input, call) => ({
   namespaces: call.scenario === "empty" ? [] : mockNamespaces,
 }));
 
-on(SystemService.method.getSubstrateStatus, (input, call) => {
-  // `empty` is a cluster with the substrate switched off rather than a truncated
-  // inventory: every list absent and `enabled` false is a state the page renders,
-  // where half an inventory is not.
-  if (call.scenario === "empty") return { enabled: false };
+/** Kubernetes namespace scope for workers and pools. */
+function substrateScope(namespace: string) {
+  const scope = namespace.trim();
+  return (rowNamespace: string | undefined) =>
+    scope === "" || !rowNamespace || rowNamespace === scope;
+}
 
-  const status = mockSubstrateStatus;
+function substrateWorkerPoolMessage(pool: SubstrateWorkerPoolEntry) {
+  return {
+    ref: { namespace: pool.namespace, name: pool.name },
+    resource: structured("WorkerPool", {
+      apiVersion: "ate.dev/v1alpha1",
+      kind: "WorkerPool",
+      metadata: { namespace: pool.namespace, name: pool.name },
+      spec: { replicas: pool.replicas ?? 0, workerImage: pool.ateomImage ?? "" },
+    }, "ate.dev/v1alpha1"),
+  };
+}
 
-  /*
-   * The requested scope, narrowed the way the controller narrows it.
-   *
-   * `system.Service.GetSubstrateStatus` lists the Kubernetes halves per namespace and
-   * filters the ate-api halves by the actor's template namespace and the worker's pod
-   * namespace — keeping a row whose namespace is blank, because ate-api is not obliged
-   * to say. An empty request is every watched namespace, which for a fixture backend is
-   * everything it has. Filtering here rather than answering the whole inventory whatever
-   * was asked for is the difference between a scope control that is observably a filter
-   * and one that is decoration.
-   */
-  const scope = input.namespace.trim();
-  const inScope = (namespace: string | undefined) =>
-    scope === "" || !namespace || namespace === scope;
+function substrateActorTemplateMessage(
+  template: SubstrateActorTemplateEntry,
+): MessageInitShape<typeof ActorTemplateSchema> {
+  return {
+    metadata: {
+      atespace: template.atespace,
+      name: template.name,
+      uid: template.goldenActorId ?? "",
+    },
+    status: {
+      goldenSnapshotStatus: {
+        goldenSnapshot: template.goldenSnapshot
+          ? { snapshotUri: template.goldenSnapshot }
+          : undefined,
+        errorMessage: template.phase === "Failed" ? "Golden snapshot failed" : "",
+      },
+    },
+    sandboxConfig: {
+      sandboxClass:
+        SandboxClass[template.sandboxClass?.toUpperCase() as keyof typeof SandboxClass]
+        ?? SandboxClass.UNSPECIFIED,
+    },
+    workerSelector: {
+      matchLabels: template.workerSelector
+        ? Object.fromEntries(template.workerSelector.split(",").map((label) => label.split("=")))
+        : {},
+    },
+  };
+}
 
-  const workerPools = status.workerPools.filter((pool) => inScope(pool.namespace));
-  const actorTemplates = status.actorTemplates.filter((template) =>
-    inScope(template.namespace),
-  );
-  const actors = status.actors.filter((actor) => inScope(actor.actorTemplateNamespace));
+function substrateActorMessage(
+  actor: SubstrateActorEntry,
+): MessageInitShape<typeof ActorSchema> {
+  return {
+    metadata: {
+      name: actor.actorId,
+      atespace: actor.atespace ?? "",
+      version: BigInt(actor.version ?? 0),
+    },
+    actorTemplate: {
+      atespace: actor.actorTemplateAtespace ?? "",
+      name: actor.actorTemplateName ?? "",
+    },
+    status: {
+      state: ActorState[
+        actor.status.replace(/^ACTOR_STATE_/, "").toUpperCase() as keyof typeof ActorState
+      ] ?? ActorState.UNSPECIFIED,
+      workerAssignment: actor.ateomPodName ? {
+        workerNamespace: actor.ateomPodNamespace ?? "",
+        workerPod: actor.ateomPodName,
+        workerPodIp: actor.ateomPodIp ?? "",
+        workerPool: actor.workerPoolName ?? "",
+      } : undefined,
+      externalSnapshot: actor.latestSnapshot
+        ? { snapshotUri: actor.latestSnapshot }
+        : undefined,
+      inProgressSnapshotName: actor.inProgressSnapshot ?? "",
+    },
+  };
+}
+
+function substrateWorkerMessage(worker: SubstrateWorkerEntry): MessageInitShape<typeof WorkerSchema> {
+  return {
+    workerNamespace: worker.workerNamespace,
+    workerPool: worker.workerPool,
+    workerPod: worker.workerPod,
+    ip: worker.ip ?? "",
+    metadata: { version: BigInt(worker.version ?? 0) },
+    status: {
+      allocated: {
+        // Worker allocation includes actors from every atespace.
+        actors: mockSubstrateInventory.actors.filter((actor) =>
+          actor.ateomPodNamespace === worker.workerNamespace && actor.ateomPodName === worker.workerPod
+        ).length,
+      },
+    },
+  };
+}
+
+/** Simulate upstream pagination; clients treat the fixture token as opaque. */
+function substratePage<T>(rows: T[], pageSize: number, pageToken: string) {
+  const start = Number.parseInt(pageToken, 10) || 0;
+  const limit = pageSize > 0 ? pageSize : 50;
+  const end = Math.min(start + limit, rows.length);
+  return {
+    rows: rows.slice(start, end),
+    nextPageToken: end < rows.length ? String(end) : "",
+  };
+}
+
+on(SystemService.method.getSubstrateSummary, (input, call) => {
+  if (call.scenario === "empty") return {};
+
+  const status = mockSubstrateInventory;
+  const inScope = substrateScope(input.namespace);
+  const actors = status.actors.filter((actor) => (!input.atespace || actor.atespace === input.atespace));
   const workers = status.workers.filter((worker) => inScope(worker.workerNamespace));
 
+  const statusCounts = new Map<ActorState, number>();
+  for (const actor of actors) {
+    const state = substrateActorMessage(actor).status?.state ?? ActorState.UNSPECIFIED;
+    statusCounts.set(state, (statusCounts.get(state) ?? 0) + 1);
+  }
+  const busyWorkerCount = workers.filter((worker) =>
+    (substrateWorkerMessage(worker).status?.allocated?.actors ?? 0) > 0
+  ).length;
+
+  /*
+   * The error and the complete counts together, which is a state the controller really
+   * does produce — worth spelling out, because a fixture that models an impossible one
+   * makes every assertion resting on it worthless.
+   *
+   * `GetSubstrateSummary` makes three independent ate-api reads and none of them gates
+   * the others, so a walk that fails keeps whatever it had already tallied and the
+   * reads beside it still answer in full. This is that: the actor walk failed fetching
+   * a token after counting everything it could reach, and the template listing and the
+   * worker walk succeeded. Before those reads were made independent, one failure zeroed
+   * every count, and this shape could not have occurred.
+   */
   return {
-    enabled: status.enabled,
     ateApiError: status.ateApiError ?? "",
-    workerPools: workerPools.map((pool) => ({
-      namespace: pool.namespace,
-      name: pool.name,
-      replicas: pool.replicas ?? 0,
-      ateomImage: pool.ateomImage ?? "",
-    })),
-    actorTemplates: actorTemplates.map((template) => ({
-      namespace: template.namespace,
-      name: template.name,
-      phase: template.phase ?? "",
-      goldenActorId: template.goldenActorId ?? "",
-      goldenSnapshot: template.goldenSnapshot ?? "",
-      sandboxClass: template.sandboxClass ?? "",
-      workerSelector: template.workerSelector ?? "",
-      harnessName: template.harnessName ?? "",
-    })),
-    actors: actors.map((actor) => ({
-      actorId: actor.actorId,
-      atespace: actor.atespace ?? "",
-      status: actor.status ?? "",
-      actorTemplateNamespace: actor.actorTemplateNamespace ?? "",
-      actorTemplateName: actor.actorTemplateName ?? "",
-      ateomPodNamespace: actor.ateomPodNamespace ?? "",
-      ateomPodName: actor.ateomPodName ?? "",
-      ateomPodIp: actor.ateomPodIp ?? "",
-      latestSnapshot: actor.latestSnapshot ?? "",
-      workerPoolName: actor.workerPoolName ?? "",
-      inProgressSnapshot: actor.inProgressSnapshot ?? "",
-      // `int64` on the wire.
-      version: BigInt(actor.version ?? 0),
-    })),
-    workers: workers.map((worker) => ({
-      workerNamespace: worker.workerNamespace,
-      workerPool: worker.workerPool,
-      workerPod: worker.workerPod,
-      actorNamespace: worker.actorNamespace ?? "",
-      actorTemplate: worker.actorTemplate ?? "",
-      actorId: worker.actorId ?? "",
-      ip: worker.ip ?? "",
-      version: BigInt(worker.version ?? 0),
-    })),
+    workerPools: status.workerPools
+      .filter((pool) => inScope(pool.namespace))
+      .map(substrateWorkerPoolMessage),
+    actorTemplates: status.actorTemplates
+      .filter((template) => (!input.atespace || template.atespace === input.atespace))
+      .map(substrateActorTemplateMessage),
+    actorCount: BigInt(actors.length),
+    workerCount: BigInt(workers.length),
+    runningActorCount: BigInt(
+      actors.filter((actor) => actor.status.toLowerCase() === "running").length,
+    ),
+    busyWorkerCount: BigInt(busyWorkerCount),
+    actorStatusCounts: [...statusCounts]
+      .sort(([left], [right]) => left - right)
+      .map(([state, count]) => ({ state, count: BigInt(count) })),
+    computedAt: timestampFromDate(new Date()),
+  };
+});
+
+on(SystemService.method.listSubstrateActors, (input, call) => {
+  if (call.scenario === "empty") return {};
+  const actors = mockSubstrateInventory.actors.filter((actor) => !input.atespace || actor.atespace === input.atespace);
+  const page = substratePage(actors, input.page?.limit ?? 0, input.page?.pageToken ?? "");
+  return {
+    actors: page.rows.map(substrateActorMessage),
+    page: { nextPageToken: page.nextPageToken },
+    computedAt: timestampFromDate(new Date()),
+  };
+});
+
+on(SystemService.method.listSubstrateWorkers, (input, call) => {
+  if (call.scenario === "empty") return {};
+  const inScope = substrateScope(input.namespace);
+  // Substrate pages before kagent applies the namespace filter.
+  const page = substratePage(mockSubstrateInventory.workers, input.page?.limit ?? 0, input.page?.pageToken ?? "");
+  return {
+    workers: page.rows.filter((worker) => inScope(worker.workerNamespace)).map(substrateWorkerMessage),
+    page: { nextPageToken: page.nextPageToken },
+    computedAt: timestampFromDate(new Date()),
   };
 });
 

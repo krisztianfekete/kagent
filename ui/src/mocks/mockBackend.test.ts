@@ -222,7 +222,6 @@ const INPUTS = {
   "agentInstances.checkpoints.delete": { checkpointId: DISPOSABLE_CHECKPOINT.id },
 
   "namespaces.list": {},
-  "substrate.status": {},
   "substrate.summary": {},
   "substrate.actors": {},
   "substrate.workers": {},
@@ -251,6 +250,33 @@ describe("the fixture backend", () => {
     );
 
     expect(failures.filter(Boolean)).toEqual([]);
+  });
+
+  it("serves upstream substrate messages through the UI conversions", async () => {
+    const [summary, page] = await Promise.all([
+      invoke("substrate.summary", {}),
+      invoke("substrate.actors", {}),
+    ]);
+    expect(summary.actorTemplates[0]).toMatchObject({
+      name: "coder-template",
+      phase: "Ready",
+      sandboxClass: "gvisor",
+      workerSelector: "pool=default-pool",
+    });
+    expect(summary.workerPools[0]).toMatchObject({ namespace: "kagent", name: "default-pool", replicas: 3, ateomImage: "ghcr.io/ate-dev/ateom:1.4.0" });
+    expect(page.actors.find((actor) => actor.actorId === "actor-7f21")).toMatchObject({
+      atespace: "team-a", status: "Running", actorTemplateAtespace: "kagent", actorTemplateName: "coder-template",
+    });
+    expect(page.actors.find((actor) => actor.actorId === "actor-9c03")?.status).toBe("Suspending");
+  });
+
+  it("preserves continuation through a worker page with no namespace matches", async () => {
+    const first = await invoke("substrate.workers", { namespace: "platform", limit: 1 });
+    expect(first.workers).toEqual([]);
+    expect(first.nextPageToken).toBeDefined();
+    const last = await invoke("substrate.workers", { namespace: "platform", limit: 1, pageToken: first.nextPageToken });
+    expect(last.workers).toEqual([]);
+    expect(last.nextPageToken).toBeUndefined();
   });
 
   /*

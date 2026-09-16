@@ -16,7 +16,7 @@ import (
 
 	a2atype "github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2apb/v1/pbconv"
-	apiv1alpha1 "github.com/kagent-dev/kagent/go/api/gen/kagent/api/v1alpha1"
+	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/substrate"
 	"github.com/kagent-dev/kagent/go/pkg/tracing"
@@ -397,19 +397,11 @@ func assertActorSuspended(t *testing.T, fixture *interactionFixture) {
 	ctx, cancel := context.WithTimeout(metadata.AppendToOutgoingContext(t.Context(), "x-user-id", "e2e"), 30*time.Second)
 	defer cancel()
 	err := wait.PollUntilContextTimeout(ctx, time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
-		status, err := fixture.system.GetSubstrateStatus(ctx, &apiv1alpha1.GetSubstrateStatusRequest{Namespace: "kagent"})
+		actor, err := findSubstrateActor(ctx, fixture.system, "", actorID)
 		if err != nil {
 			return false, err
 		}
-		if status.GetAteApiError() != "" {
-			return false, fmt.Errorf("substrate status: %s", status.GetAteApiError())
-		}
-		for _, actor := range status.GetActors() {
-			if actor.GetActorId() == actorID {
-				return actor.GetStatus() == "Suspended", nil
-			}
-		}
-		return false, nil
+		return actor != nil && actor.GetStatus().GetState() == ateapipb.ActorState_ACTOR_STATE_SUSPENDED, nil
 	})
 	if err != nil {
 		t.Fatalf("Actor %s did not reach Suspended: %v", actorID, err)
