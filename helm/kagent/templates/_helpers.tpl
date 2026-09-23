@@ -390,11 +390,13 @@ oauth2-proxy to evaluate, instead of trying to evaluate it itself). It is
 forwarded to kagent's branded /login page.
 */}}
 {{- define "kagent.oauth2ProxySignInHTML" -}}
+{{- /* The oauth2-proxy checksum renders this without `ui`, so a basePath change alone doesn't roll the pod. */ -}}
+{{- $base := trimSuffix "/" ((.Values.ui | default dict).basePath | default "") -}}
 <!DOCTYPE html>
 <html>
 <head>
-  <meta http-equiv="refresh" content="0;url=/login?rd={{ "{{" }} or .Redirect "/" | urlquery {{ "}}" }}">
-  <script>window.location.href = "/login?rd={{ "{{" }} or .Redirect "/" | urlquery {{ "}}" }}";</script>
+  <meta http-equiv="refresh" content="0;url={{ $base }}/login?rd={{ "{{" }} or .Redirect "/" | urlquery {{ "}}" }}">
+  <script>window.location.href = "{{ $base }}/login?rd={{ "{{" }} or .Redirect "/" | urlquery {{ "}}" }}";</script>
 </head>
 <body>Redirecting to login...</body>
 </html>
