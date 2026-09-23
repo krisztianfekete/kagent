@@ -83,12 +83,14 @@ func Init(ctx context.Context, opts Options) (*Providers, error) {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("OTEL_SDK_DISABLED")), "true") {
 		return providers, nil
 	}
+	var errs []error
 	res, err := newResource(ctx, opts)
 	if err != nil {
-		return providers, fmt.Errorf("telemetry resource: %w", err)
+		if !errors.Is(err, resource.ErrPartialResource) {
+			return providers, fmt.Errorf("telemetry resource: %w", err)
+		}
+		errs = append(errs, fmt.Errorf("telemetry resource: %w", err))
 	}
-
-	var errs []error
 	if exporter, err := autoexport.NewSpanExporter(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("traces: %w", err))
 	} else if !autoexport.IsNoneSpanExporter(exporter) {

@@ -62,7 +62,6 @@ func TestTelemetryConfigFromProcess(t *testing.T) {
 		{Name: "OTEL_SERVICE_NAME", Value: "demo-claude"},
 		{Name: "OTEL_RESOURCE_ATTRIBUTES", Value: "gen_ai.agent.id=team/demo-claude,gen_ai.agent.name=demo-claude,gen_ai.provider.name=anthropic,gen_ai.request.model=claude-sonnet-5,service.namespace=team"},
 		{Name: "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", Value: "SPAN_ONLY"},
-		{Name: "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT", Value: "4096"},
 	}
 	if environment := got.TelemetryEnvironment(testIdentity, ""); !reflect.DeepEqual(environment, want) {
 		t.Errorf("environment = %#v\nwant %#v", environment, want)

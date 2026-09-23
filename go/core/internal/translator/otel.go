@@ -23,7 +23,6 @@ const (
 	otelExporterOTLPEndpoint = "OTEL_EXPORTER_OTLP_ENDPOINT"
 	otelExporterOTLPProtocol = "OTEL_EXPORTER_OTLP_PROTOCOL"
 	otelExporterOTLPTimeout  = "OTEL_EXPORTER_OTLP_TIMEOUT"
-	otelAttributeValueLimit  = "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT"
 	otelCaptureRawAPIBodies  = "KAGENT_OTEL_CAPTURE_RAW_API_BODIES"
 	otelMaxCaptureBytes      = "KAGENT_OTEL_MAX_CAPTURE_BYTES"
 	// OperatorResourceAttributesVariable carries the operator's resource
@@ -304,7 +303,7 @@ func IsResourceAttributesVariable(name string) bool {
 func OwnsTelemetryEnvironment(name string) bool {
 	switch name {
 	case otelSDKDisabled, otelServiceName,
-		otelExporterOTLPEndpoint, otelExporterOTLPProtocol, otelExporterOTLPTimeout, otelAttributeValueLimit,
+		otelExporterOTLPEndpoint, otelExporterOTLPProtocol, otelExporterOTLPTimeout,
 		tracing.CaptureContentEnvironmentVariable:
 		return true
 	}
@@ -368,12 +367,7 @@ func (c TelemetryConfig) TelemetryEnvironment(identity tracing.RuntimeTelemetry,
 	if c.Timeout != "" {
 		environment = append(environment, corev1.EnvVar{Name: otelExporterOTLPTimeout, Value: c.Timeout})
 	}
-	environment = append(environment, corev1.EnvVar{Name: otelServiceName, Value: identity.AgentName}, resource, capture)
-	if c.CaptureSensitiveContent && c.Traces.Enabled {
-		limit := tracing.RuntimeTelemetry{CaptureContent: true, MaxCaptureBytes: c.MaxCaptureBytes}.CaptureLimit()
-		environment = append(environment, corev1.EnvVar{Name: otelAttributeValueLimit, Value: strconv.Itoa(limit)})
-	}
-	return environment
+	return append(environment, corev1.EnvVar{Name: otelServiceName, Value: identity.AgentName}, resource, capture)
 }
 
 // DefaultsEnvironment renders telemetry.Defaults for an image that may not

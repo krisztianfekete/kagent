@@ -14,6 +14,7 @@ import (
 	"github.com/kagent-dev/kagent/go/core/internal/translator/adkconfig"
 	"github.com/kagent-dev/kagent/go/pkg/tracing"
 	"istio.io/istio/pkg/kube/krt"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // Compiler translates resolved inputs into a BYO A2A runtime revision.
@@ -39,16 +40,17 @@ func (c *Compiler) Compile(ctx context.Context, input *v2translator.HarnessInput
 	if err != nil {
 		return nil, fmt.Errorf("convert agent card: %w", err)
 	}
+	// An opaque image may export to its own backend, so its own values win.
 	telemetryConfig, _ := v2translator.TelemetryConfigFromProcess()
-	harnessAttributes, err := v2translator.HarnessResourceAttributes(harness)
-	if err != nil {
-		return nil, err
+	environment := append([]corev1.EnvVar(nil), compiled.Environment...)
+	if telemetryConfig.Enabled() {
+		environment = append(environment, v2translator.DefaultsEnvironment()...)
+		environment = append(environment, telemetryConfig.TelemetryEnvironment(tracing.RuntimeTelemetry{
+			AgentName: template.Name + "-" + harness.Name, AgentNamespace: template.Namespace,
+		}, "")...)
+		compiled.Egress = append(compiled.Egress, telemetryConfig.Destinations()...)
 	}
-	environment := append(compiled.Environment, adkconfig.HarnessEnvironment(harness)...)
-	environment = adkconfig.DedupeEnv(append(environment, telemetryConfig.TelemetryEnvironment(tracing.RuntimeTelemetry{
-		AgentName: template.Name + "-" + harness.Name, AgentNamespace: template.Namespace,
-	}, harnessAttributes)...))
-	environment = adkconfig.DedupeEnv(append(v2translator.DefaultsEnvironment(), environment...))
+	environment = adkconfig.DedupeEnv(append(environment, adkconfig.HarnessEnvironment(harness)...))
 	provenance, err := c.config.BuildProvenance(ctx, harness, compiled.Templates, compiled.Models, environment)
 	if err != nil {
 		return nil, fmt.Errorf("build revision provenance: %w", err)
@@ -57,7 +59,6 @@ func (c *Compiler) Compile(ctx context.Context, input *v2translator.HarnessInput
 	if err != nil {
 		return nil, err
 	}
-	compiled.Egress = append(compiled.Egress, telemetryConfig.Destinations()...)
 	slices.Sort(compiled.Egress)
 
 	return &v2translator.CompileResult{Revision: v2translator.Revision{

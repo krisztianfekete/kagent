@@ -79,7 +79,9 @@ kagent runtimes apply three defaults when the environment leaves them unset:
 model providers, `OTEL_EXPORTER_OTLP_COMPRESSION=gzip`, and base-2 exponential
 histograms. The Go runtimes set them in `go/pkg/telemetry`, which also hands
 them to the Claude and Codex processes. The Python runtimes set them in
-`kagent.core`. A BYO image gets them compiled in. The Python ADK also defaults
+`kagent.core`. A BYO image gets them compiled in, together with the rest of the
+kagent telemetry, only while kagent telemetry is on, and its own `Harness.spec.env`
+values win, so an image that exports to its own backend keeps doing so. The Python ADK also defaults
 `ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN=2`, `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`,
 and `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` from the capture setting.
 

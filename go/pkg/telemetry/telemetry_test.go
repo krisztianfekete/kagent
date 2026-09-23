@@ -117,6 +117,20 @@ func TestInitKeepsWorkingSignalsWhenOneFails(t *testing.T) {
 	t.Cleanup(func() { _ = providers.Shutdown(context.Background()) })
 }
 
+func TestInitKeepsSignalsWithAMalformedResourceAttribute(t *testing.T) {
+	restoreGlobals(t)
+	setExporters(t, "console", "none", "none")
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "team=a,b,service.instance.id=uid")
+	providers, err := Init(t.Context(), Options{})
+	if err == nil || !strings.Contains(err.Error(), "partial resource") {
+		t.Fatalf("error = %v, want the partial resource reported", err)
+	}
+	t.Cleanup(func() { _ = providers.Shutdown(context.Background()) })
+	if !providers.TracesEnabled() {
+		t.Fatal("a malformed resource attribute turned traces off")
+	}
+}
+
 func TestInitAppliesDefaultsWithoutBaggage(t *testing.T) {
 	restoreGlobals(t)
 	setExporters(t, "none", "none", "none")

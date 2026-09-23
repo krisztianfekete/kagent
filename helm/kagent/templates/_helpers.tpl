@@ -468,7 +468,11 @@ Operator resource attributes as an OTEL_RESOURCE_ATTRIBUTES value.
 {{- define "kagent.otel.resourceAttributes" -}}
 {{- $entries := list -}}
 {{- range $key, $value := .Values.otel.resourceAttributes -}}
-{{- $entries = append $entries (printf "%s=%v" $key $value) -}}
+{{- if or (contains "," $key) (contains "=" $key) -}}
+{{- fail (printf "otel.resourceAttributes key %q must not contain ',' or '='" $key) -}}
+{{- end -}}
+{{- $encoded := toString $value | replace "%" "%25" | replace "," "%2C" | replace "=" "%3D" -}}
+{{- $entries = append $entries (printf "%s=%s" $key $encoded) -}}
 {{- end -}}
 {{- join "," $entries -}}
 {{- end }}

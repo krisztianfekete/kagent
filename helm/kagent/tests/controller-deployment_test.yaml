@@ -286,6 +286,17 @@ tests:
           path: data.KAGENT_OTEL_RESOURCE_ATTRIBUTES
           value: "deployment.environment.name=prod,k8s.cluster.name=east"
 
+  - it: should percent-encode resource attribute values
+    template: controller-configmap.yaml
+    set:
+      otel:
+        resourceAttributes:
+          team: "a,b=c%d"
+    asserts:
+      - equal:
+          path: data.KAGENT_OTEL_RESOURCE_ATTRIBUTES
+          value: "team=a%2Cb%3Dc%25d"
+
   - it: should identify the controller pod on its own telemetry
     template: controller-deployment.yaml
     set:
