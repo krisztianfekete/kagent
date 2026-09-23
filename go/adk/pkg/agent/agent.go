@@ -350,10 +350,11 @@ func CreateLLM(ctx context.Context, m adk.Model) (adkmodel.LLM, error) {
 		return models.NewMistralModel(ctx, cfg)
 
 	case *adk.Ollama:
+		// Leave the host empty when the controller did not set one: NewOllamaModel
+		// then applies the cloud/local routing. Defaulting it to localhost here
+		// would look like an operator-chosen endpoint and pin every cloud model
+		// to the local daemon.
 		baseURL := os.Getenv("OLLAMA_API_BASE")
-		if baseURL == "" {
-			baseURL = "http://localhost:11434"
-		}
 		modelName := m.Model
 		if modelName == "" {
 			modelName = DefaultOllamaModel
@@ -363,7 +364,9 @@ func CreateLLM(ctx context.Context, m adk.Model) (adkmodel.LLM, error) {
 			TransportConfig: transportConfigFromBase(m.BaseModel, nil),
 			Model:           modelName,
 			Host:            baseURL,
-			Options:         m.Options,
+			// The environment holds only the gateway credential placeholder.
+			APIKey:  os.Getenv("OLLAMA_API_KEY"),
+			Options: m.Options,
 		}
 		return models.NewOllamaModel(ctx, cfg)
 

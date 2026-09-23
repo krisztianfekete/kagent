@@ -712,7 +712,17 @@ providers:
     #   disableSystemCAs: false
   ollama:
     provider: Ollama
+    # A local model, pulled with `ollama pull`. Ollama Cloud models are listed in
+    # the UI (see the controller's static catalog) and reached with a ":cloud" tag
+    # or bare cloud tag such as "deepseek-v4.1-flash".
     model: "llama3.2"
+    # apiKeySecretRef/apiKeySecretKey point at the Secret holding OLLAMA_API_KEY.
+    # With no explicit host, a cloud model reaches api.ollama.com via gateway
+    # credential injection; without a Secret it uses the signed-in local daemon.
+    # Remove config.host below for direct cloud routing (the default host pins
+    # requests to the local daemon even when a Secret is configured).
+    # apiKeySecretRef: "kagent-ollama-cloud"
+    # apiKeySecretKey: "OLLAMA_API_KEY"
     config:
       host: host.docker.internal:11434
       options:
