@@ -408,9 +408,10 @@ func TestCompileAgentTemplateInjectsCredentialsAtGateway(t *testing.T) {
 }
 
 func TestCompileAgentTemplateForwardsOtelEnvironment(t *testing.T) {
-	t.Setenv("OTEL_TRACING_ENABLED", "true")
+	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
+	t.Setenv("OTEL_METRICS_EXPORTER", "otlp")
+	t.Setenv("OTEL_LOGS_EXPORTER", "otlp")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317")
-	t.Setenv("OTEL_LOGGING_ENABLED", "true")
 	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://logs:4318/v1/logs")
 	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
 	harness := &v1alpha3.Harness{
@@ -441,9 +442,11 @@ func TestCompileAgentTemplateForwardsOtelEnvironment(t *testing.T) {
 		found[variable.Name] = variable.Value
 	}
 	for name, value := range map[string]string{
-		"OTEL_TRACING_ENABLED": "true", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://collector:4317",
-		"OTEL_LOGGING_ENABLED": "true", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://logs:4318/v1/logs",
-		"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "http/protobuf",
+		"OTEL_TRACES_EXPORTER": "otlp", "OTEL_METRICS_EXPORTER": "otlp", "OTEL_LOGS_EXPORTER": "otlp",
+		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317", "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://logs:4318/v1/logs", "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "http/protobuf",
+		"OTEL_SERVICE_NAME":        "helper-kagent",
+		"OTEL_RESOURCE_ATTRIBUTES": "gen_ai.agent.id=test/helper-kagent,gen_ai.agent.name=helper-kagent,service.namespace=test",
 	} {
 		if found[name] != value {
 			t.Errorf("environment[%s] = %q, want %q", name, found[name], value)

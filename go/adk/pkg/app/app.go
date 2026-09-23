@@ -65,6 +65,7 @@ type AppConfig struct {
 	// static identity is stamped on every invocation span. The zero value
 	// leaves invocation spans without a runtime or agent identity.
 	Telemetry tracing.RuntimeTelemetry
+	Flush     func(context.Context) error
 }
 
 // KAgentApp wires an AgentExecutor with kagent's A2A server.
@@ -149,6 +150,7 @@ func New(cfg AppConfig, executor a2asrv.AgentExecutor) (*KAgentApp, error) {
 		HealthPaths:     cfg.HealthPaths,
 		HealthHandler:   cfg.HealthHandler,
 		Telemetry:       cfg.Telemetry,
+		Flush:           cfg.Flush,
 	}
 
 	a2aServer, err := server.NewA2AServer(cfg.AgentCard, executor, log, serverConfig, handlerOpts...)

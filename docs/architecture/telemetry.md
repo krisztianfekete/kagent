@@ -47,40 +47,56 @@ the two still differ.
 
 ## Enabling export
 
-The controller resolves telemetry from its own process environment and compiles
-the result into each runtime revision.
+Configuration uses the OpenTelemetry SDK variables only. The chart renders them
+into the controller from `otel.*`, the controller exports with them, and it
+compiles the same settings into every runtime revision.
 
-| Variable | Effect |
+| Chart value | Variable |
 | --- | --- |
-| `OTEL_TRACING_ENABLED` | Enables trace export for compiled runtimes |
-| `OTEL_LOGGING_ENABLED` | Enables log export for compiled runtimes |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Destination, with the usual signal-specific overrides |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` or `http/protobuf`, with signal-specific overrides |
-| `KAGENT_OTEL_CAPTURE_SENSITIVE_CONTENT` | Enables bounded prompt and response capture. Off by default |
-| `KAGENT_OTEL_CAPTURE_RAW_API_BODIES` | Enables native raw provider body logging. Off by default |
-| `KAGENT_OTEL_MAX_CAPTURE_BYTES` | Bytes retained per captured prompt and per captured response. Defaults to 16 KiB, ceiling 64 KiB |
+| `otel.traces.enabled`, `otel.metrics.enabled`, `otel.logs.enabled` | `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER`, `otlp` or `none`. `OTEL_SDK_DISABLED=true` when all are off |
+| `otel.exporter.otlp.endpoint`, `.protocol`, `.timeout` | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc` or `http/protobuf`), `OTEL_EXPORTER_OTLP_TIMEOUT` in milliseconds |
+| `otel.<signal>.endpoint`, `.protocol` | `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` and `_PROTOCOL`, a full URL used as given |
+| `otel.capture.messageContent` | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`, `SPAN_ONLY` or `NO_CONTENT` |
+| `otel.capture.maxBytes` | `KAGENT_OTEL_MAX_CAPTURE_BYTES`, bytes kept per captured prompt and response. 16 KiB by default, 64 KiB at most |
+| `otel.capture.rawApiBodies` | `KAGENT_OTEL_CAPTURE_RAW_API_BODIES`, native raw provider body logging in Claude |
+| `otel.resourceAttributes` | `KAGENT_OTEL_RESOURCE_ATTRIBUTES`, added to the controller and every runtime |
 
-An unusable capture budget is reported as a compilation warning and replaced by
-the default, so an observability setting cannot invalidate an AgentTemplate.
+The chart has no sampler setting. Runtimes stay parent-based AlwaysOn and
+sampling belongs in the collector. An invalid value is reported as a warning and
+turns its signal off, so an observability setting cannot invalidate an
+AgentTemplate.
 
-The capture decision reaches every runtime as the standard GenAI instrumentation
-variable, `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`, rendered
-`SPAN_ONLY` when capture is on and `false` when it is off. It is rendered
-whether or not the controller exports traces, so a runtime that reaches a
-collector through settings the controller did not render still follows it. The
-ADK runtimes read the variable as a mode and treat a plain `true` as log records
-only, so the span form is what puts `gen_ai.input.messages` and
-`gen_ai.output.messages` on their model spans; the ADK Go runtime's older
-`gcp.vertex.agent.llm_request` and `llm_response` payload attributes follow the
-same value. The harness runtimes carry the same decision in their compiled
-configuration. The variable is controller-owned: the Claude and Codex compilers
-reject a `Harness.spec.env` entry with that name, and the kagent compiler
-replaces one with the controller's value. One setting decides whether prompts
-enter traces, and no runtime can be talked into recording them by a
-user-supplied variable.
+Each runtime receives `OTEL_SERVICE_NAME=<template>-<harness>` and an
+`OTEL_RESOURCE_ATTRIBUTES` that carries `service.namespace`, `gen_ai.agent.name`,
+`gen_ai.agent.id`, the provider and model for a harness, the operator's
+attributes, and `service.version`, the short revision id added when the
+ActorTemplate is built. A `Harness.spec.env` `OTEL_RESOURCE_ATTRIBUTES` is kept,
+with the agent identity winning. The controller reports itself as
+`kagent-controller` with `service.instance.id` and `k8s.*` from the downward API.
 
-Other `OTEL_*` variables remain available for per-Harness tuning through
-`Harness.spec.env`, including `OTEL_RESOURCE_ATTRIBUTES`.
+kagent runtimes apply three defaults when the environment leaves them unset:
+`OTEL_PROPAGATORS=tracecontext`, so a caller's baggage never reaches tools or
+model providers, `OTEL_EXPORTER_OTLP_COMPRESSION=gzip`, and base-2 exponential
+histograms. The Go runtimes set them in `go/pkg/telemetry`, which also hands
+them to the Claude and Codex processes. The Python runtimes set them in
+`kagent.core`. A BYO image gets them compiled in. The Python ADK also defaults
+`ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN=2`, `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`,
+and `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` from the capture setting.
+
+Defaults live in the runtimes because a Substrate Actor holds at most 32
+environment variables, and the ActorTemplate itself uses nine. The controller
+renders only what differs by installation, and
+`TestCompiledTelemetryFitsTheActorEnvironmentBudget` pins the worst case.
+
+The capture variable is rendered whether or not the controller exports, so a
+runtime that reaches a collector through settings the controller did not render
+still follows it. It is controller-owned: the Claude and Codex compilers reject
+a `Harness.spec.env` entry with that name, and the kagent compiler replaces one.
+The harness runtimes carry the same decision in their compiled configuration.
+Other `OTEL_*` variables, such as `OTEL_BSP_*`, remain available for per-Harness
+tuning through `Harness.spec.env`. `OTEL_EXPORTER_OTLP_HEADERS` is not
+forwarded, because an Actor environment holds no secrets. Export to an
+in-cluster collector that adds them.
 
 ## Conventions and versioning
 
@@ -151,10 +167,10 @@ request span is a transport span, completed when the response it describes is
 delivered, and the ADK's own `invoke_agent` describes the turn. Completion runs
 exactly once.
 
-For runtimes whose Actor may be suspended as soon as a quiescent event leaves
-the process, completion exports before that event is yielded. The export is
-bounded by `KAGENT_TRACE_FLUSH_TIMEOUT_MS`, three seconds by default, so an
-unreachable collector costs at most that budget once per segment.
+An Actor may be suspended as soon as a quiescent event leaves the process, so
+completion exports spans and metrics before that event is yielded. The export
+waits at most three seconds, so an unreachable collector costs at most that
+once per segment. It does nothing when traces are off.
 
 A segment records `abandoned` when the A2A event consumer stopped accepting
 events before execution finished, and `interrupted` when the execution context

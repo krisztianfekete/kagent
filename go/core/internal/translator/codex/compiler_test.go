@@ -98,11 +98,11 @@ func TestCompileProviderCredentials(t *testing.T) {
 }
 
 func TestCompileTracing(t *testing.T) {
-	t.Setenv("KAGENT_OTEL_CAPTURE_SENSITIVE_CONTENT", "false")
-	t.Setenv("OTEL_TRACING_ENABLED", "true")
+	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "NO_CONTENT")
+	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
 	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
-	t.Setenv("OTEL_LOGGING_ENABLED", "true")
+	t.Setenv("OTEL_LOGS_EXPORTER", "otlp")
 	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://logs:4317")
 	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "grpc")
 	responses := v1alpha3.OpenAIAPIFormatResponses
@@ -131,20 +131,21 @@ func TestCompileTracing(t *testing.T) {
 		environment[variable.Name] = variable.Value
 	}
 	for name, value := range map[string]string{
-		"OTEL_TRACING_ENABLED": "true", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://collector:4318/v1/traces",
-		"OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/protobuf",
-		"OTEL_LOGGING_ENABLED":               "true",
-		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT":   "http://logs:4317",
-		"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL":   "grpc",
-		"KAGENT_NAME":                        "assistant-codex",
-		"KAGENT_NAMESPACE":                   "test", preResponseTraceFlushEnv: "true",
+		"OTEL_TRACES_EXPORTER": "otlp", "OTEL_METRICS_EXPORTER": "none", "OTEL_LOGS_EXPORTER": "otlp",
+		"OTEL_EXPORTER_OTLP_ENDPOINT":      "http://collector:4318",
+		"OTEL_EXPORTER_OTLP_PROTOCOL":      "http/protobuf",
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://logs:4317",
+		"OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "grpc",
+		"OTEL_SERVICE_NAME":                "assistant-codex",
+		"KAGENT_NAME":                      "assistant-codex",
+		"KAGENT_NAMESPACE":                 "test",
 	} {
 		if environment[name] != value {
 			t.Errorf("environment[%s] = %q, want %q", name, environment[name], value)
 		}
 	}
 
-	t.Setenv("KAGENT_OTEL_CAPTURE_SENSITIVE_CONTENT", "true")
+	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_ONLY")
 	revision, err = NewCompiler(krt.TestingDummyContext{}, reader).Compile(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -319,7 +320,7 @@ func testInput(t *testing.T, modelSpec v1alpha3.ModelConfigSpec, secretData map[
 }
 
 func TestCompileRuntimeTelemetry(t *testing.T) {
-	t.Setenv("OTEL_TRACING_ENABLED", "true")
+	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://collector:4317")
 	responses := v1alpha3.OpenAIAPIFormatResponses
 	model := v1alpha3.ModelConfigSpec{
@@ -330,7 +331,7 @@ func TestCompileRuntimeTelemetry(t *testing.T) {
 	input, reader := testInput(t, model, map[string][]byte{"api-key": []byte("secret")})
 	input.Harness.Name = "fast"
 
-	t.Setenv("KAGENT_OTEL_CAPTURE_SENSITIVE_CONTENT", "false")
+	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "NO_CONTENT")
 	revision, err := NewCompiler(krt.TestingDummyContext{}, reader).Compile(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +352,7 @@ func TestCompileRuntimeTelemetry(t *testing.T) {
 		t.Fatal("content capture is not disabled by default")
 	}
 
-	t.Setenv("KAGENT_OTEL_CAPTURE_SENSITIVE_CONTENT", "true")
+	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_ONLY")
 	captured, err := NewCompiler(krt.TestingDummyContext{}, reader).Compile(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ import (
 	"github.com/kagent-dev/kagent/go/api/adk"
 	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	v2translator "github.com/kagent-dev/kagent/go/core/internal/translator"
+	"github.com/kagent-dev/kagent/go/pkg/tracing"
 	"github.com/stretchr/testify/require"
 	"istio.io/istio/pkg/kube/krt"
 	corev1 "k8s.io/api/core/v1"
@@ -34,7 +35,11 @@ func TestCompileOpaqueImage(t *testing.T) {
 	require.Equal(t, harness.Spec.Workload.Command, revision.Command)
 	require.Equal(t, harness.Spec.Workload.Args, revision.Args)
 	require.Empty(t, revision.EgressDestinations)
-	require.Equal(t, []corev1.EnvVar{{Name: "MODE", Value: "production"}}, revision.Environment)
+	telemetry, _ := v2translator.TelemetryConfigFromProcess()
+	want := append(v2translator.DefaultsEnvironment(), corev1.EnvVar{Name: "MODE", Value: "production"})
+	require.Equal(t, append(want, telemetry.TelemetryEnvironment(tracing.RuntimeTelemetry{
+		AgentName: "custom-agent-byo", AgentNamespace: "test",
+	}, "")...), revision.Environment)
 
 	var config adk.AgentConfig
 	require.NoError(t, json.Unmarshal(revision.ConfigJSON, &config))

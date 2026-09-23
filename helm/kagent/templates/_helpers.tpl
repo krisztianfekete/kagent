@@ -461,3 +461,14 @@ tag wins over the component tag.
 {{- $global := dict "imageRegistry" (include "kagent.globalImageRegistry" .) -}}
 {{- include "kagent.images.image" (dict "imageRoot" $root "global" $global) -}}
 {{- end -}}
+
+{{/*
+Operator resource attributes as an OTEL_RESOURCE_ATTRIBUTES value.
+*/}}
+{{- define "kagent.otel.resourceAttributes" -}}
+{{- $entries := list -}}
+{{- range $key, $value := .Values.otel.resourceAttributes -}}
+{{- $entries = append $entries (printf "%s=%v" $key $value) -}}
+{{- end -}}
+{{- join "," $entries -}}
+{{- end }}

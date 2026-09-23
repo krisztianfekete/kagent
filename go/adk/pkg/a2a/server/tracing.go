@@ -37,7 +37,7 @@ const invocationScope = "github.com/kagent-dev/kagent/go/adk/pkg/a2a/server"
 type invocationInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
 	logger *slog.Logger
-	flush  bool
+	flush  func(context.Context) error
 	// name and static are fixed for the life of the runtime, so they are built
 	// once rather than on every request.
 	name   string
@@ -47,7 +47,7 @@ type invocationInterceptor struct {
 // newInvocationInterceptor prepares the span name and static attributes. A
 // native harness gets the conventions' invoke_agent operation and span name;
 // any other runtime keeps the transport span name and no operation.
-func newInvocationInterceptor(logger *slog.Logger, telemetry tracing.RuntimeTelemetry, flush bool) *invocationInterceptor {
+func newInvocationInterceptor(logger *slog.Logger, telemetry tracing.RuntimeTelemetry, flush func(context.Context) error) *invocationInterceptor {
 	interceptor := &invocationInterceptor{logger: logger, flush: flush, name: tracing.TransportSpanName}
 	if telemetry.Runtime.NativeHarness() {
 		interceptor.name = tracing.OperationInvokeAgent + " " + telemetry.AgentName

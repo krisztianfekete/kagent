@@ -41,14 +41,16 @@ import (
 	systemservice "github.com/kagent-dev/kagent/go/core/internal/service/system"
 	toolservice "github.com/kagent-dev/kagent/go/core/internal/service/tool"
 	"github.com/kagent-dev/kagent/go/core/internal/substrate"
-	"github.com/kagent-dev/kagent/go/core/internal/telemetry"
 	v2translator "github.com/kagent-dev/kagent/go/core/internal/translator"
 	"github.com/kagent-dev/kagent/go/core/internal/version"
 	"github.com/kagent-dev/kagent/go/core/pkg/auth"
 	kagentenv "github.com/kagent-dev/kagent/go/core/pkg/env"
 	"github.com/kagent-dev/kagent/go/core/pkg/migrations"
 	"github.com/kagent-dev/kagent/go/pkg/logging"
+	"github.com/kagent-dev/kagent/go/pkg/telemetry"
 	kmcp "github.com/kagent-dev/kmcp/api/v1alpha1"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
@@ -160,15 +162,17 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	// otelgrpc snapshots the global TracerProvider and propagator when its handler
 	// is constructed, so tracing has to be registered before any server is built.
-	shutdownTracing, err := telemetry.InitTracerProvider(ctx, version.Version)
+	providers, err := telemetry.Init(ctx, telemetry.Options{Defaults: []attribute.KeyValue{
+		semconv.ServiceName("kagent-controller"), semconv.ServiceNamespace("kagent"), semconv.ServiceVersion(version.Version),
+	}})
 	if err != nil {
-		return fmt.Errorf("initialize tracing: %w", err)
+		logger.ErrorContext(ctx, "failed to initialize telemetry", "error", err)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := shutdownTracing(shutdownCtx); err != nil {
-			logger.ErrorContext(shutdownCtx, "failed to shut down tracing", "error", err)
+		if err := providers.Shutdown(shutdownCtx); err != nil {
+			logger.ErrorContext(shutdownCtx, "failed to shut down telemetry", "error", err)
 		}
 	}()
 
