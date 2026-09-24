@@ -348,10 +348,11 @@ func (c TelemetryConfig) TelemetryEnvironment(identity tracing.RuntimeTelemetry,
 		}
 		environment = append(environment, corev1.EnvVar{Name: signal.exporterVariable(), Value: exporter})
 	}
-	if c.Endpoint != "" {
+	sharedEndpoint, sharedProtocol := c.sharedExporter()
+	if sharedEndpoint {
 		environment = append(environment, corev1.EnvVar{Name: otelExporterOTLPEndpoint, Value: c.Endpoint})
 	}
-	environment = append(environment, corev1.EnvVar{Name: otelExporterOTLPProtocol, Value: c.Protocol})
+	environment = append(environment, corev1.EnvVar{Name: otelExporterOTLPProtocol, Value: sharedProtocol})
 	for _, signal := range signals {
 		resolved := c.signal(signal)
 		if !resolved.Enabled {
@@ -360,14 +361,37 @@ func (c TelemetryConfig) TelemetryEnvironment(identity tracing.RuntimeTelemetry,
 		if resolved.EndpointOverride != "" {
 			environment = append(environment, corev1.EnvVar{Name: signal.endpointVariable(), Value: resolved.EndpointOverride})
 		}
-		if resolved.ProtocolOverride != "" {
-			environment = append(environment, corev1.EnvVar{Name: signal.protocolVariable(), Value: resolved.ProtocolOverride})
+		if resolved.Protocol != sharedProtocol {
+			environment = append(environment, corev1.EnvVar{Name: signal.protocolVariable(), Value: resolved.Protocol})
 		}
 	}
 	if c.Timeout != "" {
 		environment = append(environment, corev1.EnvVar{Name: otelExporterOTLPTimeout, Value: c.Timeout})
 	}
 	return append(environment, corev1.EnvVar{Name: otelServiceName, Value: identity.AgentName}, resource, capture)
+}
+
+// sharedExporter reports whether an enabled signal exports to the shared
+// endpoint, and the protocol most enabled signals use, so that each variable
+// is rendered once.
+func (c TelemetryConfig) sharedExporter() (bool, string) {
+	endpoint := false
+	counts := map[string]int{}
+	for _, signal := range signals {
+		resolved := c.signal(signal)
+		if !resolved.Enabled {
+			continue
+		}
+		endpoint = endpoint || (resolved.EndpointOverride == "" && c.Endpoint != "")
+		counts[resolved.Protocol]++
+	}
+	protocol := c.Protocol
+	for _, candidate := range []string{"grpc", "http/protobuf"} {
+		if counts[candidate] > counts[protocol] {
+			protocol = candidate
+		}
+	}
+	return endpoint, protocol
 }
 
 // DefaultsEnvironment renders telemetry.Defaults for an image that may not

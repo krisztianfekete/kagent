@@ -72,7 +72,10 @@ func (c *Compiler) Compile(ctx context.Context, input *v2translator.HarnessInput
 	if err != nil {
 		return nil, err
 	}
-	environment := append(compiled.Environment, adkconfig.HarnessEnvironment(harness)...)
+	harnessEnvironment := slices.DeleteFunc(adkconfig.HarnessEnvironment(harness), func(variable corev1.EnvVar) bool {
+		return v2translator.OwnsTelemetryEnvironment(variable.Name)
+	})
+	environment := append(compiled.Environment, harnessEnvironment...)
 	environment = append(environment,
 		corev1.EnvVar{Name: env.KagentName.Name(), Value: template.Name + "-" + harness.Name},
 		corev1.EnvVar{Name: env.KagentNamespace.Name(), Value: template.Namespace},

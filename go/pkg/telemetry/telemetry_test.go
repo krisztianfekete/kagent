@@ -11,6 +11,8 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
@@ -196,5 +198,43 @@ func TestWithDefaultsKeepsExplicitSettings(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("WithDefaults = %v, want %v", got, want)
+	}
+}
+
+type countingMetricExporter struct {
+	exports int
+}
+
+func (e *countingMetricExporter) Temporality(kind sdkmetric.InstrumentKind) metricdata.Temporality {
+	return sdkmetric.DefaultTemporalitySelector(kind)
+}
+
+func (e *countingMetricExporter) Aggregation(kind sdkmetric.InstrumentKind) sdkmetric.Aggregation {
+	return sdkmetric.DefaultAggregationSelector(kind)
+}
+
+func (e *countingMetricExporter) Export(context.Context, *metricdata.ResourceMetrics) error {
+	e.exports++
+	return nil
+}
+
+func (e *countingMetricExporter) ForceFlush(context.Context) error { return nil }
+
+func (e *countingMetricExporter) Shutdown(context.Context) error { return nil }
+
+func TestForceFlushExportsMetricsWithTracesOff(t *testing.T) {
+	exporter := &countingMetricExporter{}
+	providers := &Providers{meter: sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter, sdkmetric.WithInterval(time.Hour))))}
+	t.Cleanup(func() { _ = providers.Shutdown(context.Background()) })
+	counter, err := providers.meter.Meter("test").Int64Counter("turns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	counter.Add(t.Context(), 1)
+	if err := providers.ForceFlush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if exporter.exports != 1 {
+		t.Fatalf("metric exports = %d, want 1", exporter.exports)
 	}
 }

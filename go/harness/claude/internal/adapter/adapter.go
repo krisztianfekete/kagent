@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/kagent-dev/kagent/go/core/pkg/agentplugins"
@@ -74,7 +75,7 @@ func New(ctx context.Context, input Input) (*driver.ProcessDriver, error) {
 	environment := setEnvironment(input.Environment, config.ClaudeConfigDirEnvName, claudeDir)
 	// The native runtime inherits the compiled identity through the standard
 	// resource variable, so no user-supplied marker is required.
-	environment = telemetry.WithDefaults(tracing.ResourceEnvironment(environment, cfg.RuntimeTelemetry.ChildResource()))
+	environment = nativeTelemetryEnvironment(telemetry.WithDefaults(tracing.ResourceEnvironment(environment, cfg.RuntimeTelemetry.ChildResource())), cfg.RuntimeTelemetry)
 	// The image and compiler pin an exact Claude version. Prevent both automatic
 	// and manual update paths from changing that runtime after validation.
 	environment = setEnvironment(environment, config.DisableUpdatesEnvName, "1")
@@ -189,6 +190,32 @@ func materializeGoogleCredentials(environment []string, directory string) ([]str
 		return nil, fmt.Errorf("materialize Google credentials: %w", err)
 	}
 	return setEnvironment(filtered, config.GoogleApplicationCredentialsEnvName, path), nil
+}
+
+// nativeTelemetryEnvironment turns on Claude Code telemetry for the signals the
+// controller exports, and its content flags when capture is on.
+func nativeTelemetryEnvironment(environment []string, telemetry tracing.RuntimeTelemetry) []string {
+	exported := func(name string) bool {
+		return slices.Contains(environment, name+"=otlp")
+	}
+	traces, logs := exported("OTEL_TRACES_EXPORTER"), exported("OTEL_LOGS_EXPORTER")
+	if !traces && !logs && !exported("OTEL_METRICS_EXPORTER") {
+		return environment
+	}
+	flags := []string{"CLAUDE_CODE_ENABLE_TELEMETRY", "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"}
+	if telemetry.CaptureContent {
+		flags = append(flags, "OTEL_LOG_USER_PROMPTS", "OTEL_LOG_TOOL_DETAILS")
+		if traces {
+			flags = append(flags, "OTEL_LOG_TOOL_CONTENT")
+		}
+		if logs {
+			flags = append(flags, "OTEL_LOG_ASSISTANT_RESPONSES")
+		}
+	}
+	for _, flag := range flags {
+		environment = setEnvironment(environment, flag, "1")
+	}
+	return environment
 }
 
 func setEnvironment(environment []string, name, value string) []string {

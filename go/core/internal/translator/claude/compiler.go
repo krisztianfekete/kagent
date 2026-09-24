@@ -44,7 +44,7 @@ func (c *Compiler) Compile(ctx context.Context, input *v2translator.HarnessInput
 		return nil, v2translator.NewValidationError("Claude does not support ModelConfig defaultHeaders, TLS, or apiKeyPassthrough yet")
 	}
 	telemetryConfig, _ := v2translator.TelemetryConfigFromProcess()
-	traceConfig, logConfig := telemetryConfig.Traces, telemetryConfig.Logs
+	logConfig := telemetryConfig.Logs
 	template, harness := input.Root.Template, input.Harness
 	// The runtime reports this identity on every invocation span and on its
 	// resource, so a user-supplied resource marker is never required.
@@ -92,26 +92,10 @@ func (c *Compiler) Compile(ctx context.Context, input *v2translator.HarnessInput
 		corev1.EnvVar{Name: env.KagentNamespace.Name(), Value: template.Namespace},
 	)
 	environment = append(environment, telemetryConfig.TelemetryEnvironment(runtimeTelemetry, harnessAttributes)...)
-	if telemetryConfig.Enabled() {
-		environment = append(environment,
-			corev1.EnvVar{Name: "CLAUDE_CODE_ENABLE_TELEMETRY", Value: "1"},
-			corev1.EnvVar{Name: "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA", Value: "1"},
-		)
-		if telemetryConfig.CaptureSensitiveContent {
-			environment = append(environment,
-				corev1.EnvVar{Name: "OTEL_LOG_USER_PROMPTS", Value: "1"},
-				corev1.EnvVar{Name: "OTEL_LOG_TOOL_DETAILS", Value: "1"},
-			)
-			if traceConfig.Enabled {
-				environment = append(environment, corev1.EnvVar{Name: "OTEL_LOG_TOOL_CONTENT", Value: "1"})
-			}
-			if logConfig.Enabled {
-				environment = append(environment, corev1.EnvVar{Name: "OTEL_LOG_ASSISTANT_RESPONSES", Value: "1"})
-			}
-		}
-		if telemetryConfig.CaptureRawAPIBodies && logConfig.Enabled {
-			environment = append(environment, corev1.EnvVar{Name: "OTEL_LOG_RAW_API_BODIES", Value: "1"})
-		}
+	// The adapter derives Claude Code's own telemetry flags; raw bodies have no
+	// compiled field yet.
+	if telemetryConfig.CaptureRawAPIBodies && logConfig.Enabled {
+		environment = append(environment, corev1.EnvVar{Name: "OTEL_LOG_RAW_API_BODIES", Value: "1"})
 	}
 
 	localAgents, err := c.compileLocalAgents(input.Root)

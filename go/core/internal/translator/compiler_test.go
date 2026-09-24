@@ -414,9 +414,11 @@ func TestCompileAgentTemplateForwardsOtelEnvironment(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317")
 	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://logs:4318/v1/logs")
 	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
+	otherCollector := "http://other-collector:4317"
 	harness := &v1alpha3.Harness{
 		ObjectMeta: metav1.ObjectMeta{Name: "kagent", Namespace: "test"},
 		Spec: v1alpha3.HarnessSpec{
+			Env:                   []v1alpha3.HarnessEnvVar{{Name: "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", Value: &otherCollector}},
 			Kagent:                &v1alpha3.KagentHarness{},
 			AllowedAgentTemplates: &v1alpha3.HarnessAgentTemplateAdmission{Selector: metav1.LabelSelector{}},
 			Workload:              v1alpha3.HarnessWorkload{Image: "example.com/kagent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -451,6 +453,9 @@ func TestCompileAgentTemplateForwardsOtelEnvironment(t *testing.T) {
 		if found[name] != value {
 			t.Errorf("environment[%s] = %q, want %q", name, found[name], value)
 		}
+	}
+	if _, overridden := found["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]; overridden {
+		t.Errorf("Harness trace endpoint survived; egress only allows the controller's collector")
 	}
 	for _, hostname := range []string{"collector", "logs"} {
 		if !slices.Contains(spec.EgressDestinations, hostname) {

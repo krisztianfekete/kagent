@@ -151,8 +151,7 @@ func TestCompileTracing(t *testing.T) {
 	}
 	for name, value := range map[string]string{
 		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://collector:4317",
-		"OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "grpc", "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-		"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1", "OTEL_TRACES_EXPORTER": "otlp",
+		"OTEL_EXPORTER_OTLP_PROTOCOL":        "grpc", "OTEL_TRACES_EXPORTER": "otlp",
 		"OTEL_METRICS_EXPORTER": "none", "OTEL_LOGS_EXPORTER": "none",
 		"OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "false",
 		"OTEL_SERVICE_NAME":        "assistant-claude",
@@ -164,6 +163,9 @@ func TestCompileTracing(t *testing.T) {
 			t.Errorf("environment[%s] = %q, want %q", name, environment[name], value)
 		}
 	}
+	if _, redundant := environment["OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"]; redundant {
+		t.Error("trace protocol rendered although it matches the shared protocol")
+	}
 	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_ONLY")
 	revision, err = NewCompiler(krt.TestingDummyContext{}, reader).Compile(context.Background(), input)
 	if err != nil {
@@ -173,10 +175,8 @@ func TestCompileTracing(t *testing.T) {
 	for _, variable := range revision.Environment {
 		environment[variable.Name] = variable.Value
 	}
-	for _, name := range []string{"OTEL_LOG_USER_PROMPTS", "OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_TOOL_CONTENT"} {
-		if environment[name] != "1" {
-			t.Errorf("sensitive trace environment[%s] = %q, want 1", name, environment[name])
-		}
+	if config, err := claudeconfig.Parse(revision.ConfigJSON); err != nil || !config.RuntimeTelemetry.CaptureContent {
+		t.Errorf("compiled capture = %v, %v; the adapter derives Claude's content flags from it", config.RuntimeTelemetry.CaptureContent, err)
 	}
 	if got := environment["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"]; got != tracing.CaptureContentSpanOnly {
 		t.Errorf("capture environment = %q, want %q", got, tracing.CaptureContentSpanOnly)
@@ -207,8 +207,7 @@ func TestCompileLogging(t *testing.T) {
 	}
 	for name, value := range map[string]string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://logs:4318",
-		"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf", "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-		"CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1", "OTEL_TRACES_EXPORTER": "none",
+		"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf", "OTEL_TRACES_EXPORTER": "none",
 		"OTEL_LOGS_EXPORTER": "otlp", "OTEL_METRICS_EXPORTER": "none",
 	} {
 		if environment[name] != value {
@@ -231,13 +230,8 @@ func TestCompileLogging(t *testing.T) {
 	for _, variable := range revision.Environment {
 		environment[variable.Name] = variable.Value
 	}
-	for _, name := range []string{"OTEL_LOG_USER_PROMPTS", "OTEL_LOG_TOOL_DETAILS", "OTEL_LOG_ASSISTANT_RESPONSES", "OTEL_LOG_RAW_API_BODIES"} {
-		if environment[name] != "1" {
-			t.Errorf("sensitive log environment[%s] = %q, want 1", name, environment[name])
-		}
-	}
-	if _, exists := environment["OTEL_LOG_TOOL_CONTENT"]; exists {
-		t.Fatal("logging-only revision enables trace-based tool content")
+	if environment["OTEL_LOG_RAW_API_BODIES"] != "1" {
+		t.Errorf("raw API body environment = %q, want 1", environment["OTEL_LOG_RAW_API_BODIES"])
 	}
 }
 
@@ -712,6 +706,8 @@ func TestCompiledTelemetryFitsTheActorEnvironmentBudget(t *testing.T) {
 	for name, value := range map[string]string{
 		"OTEL_TRACES_EXPORTER": "otlp", "OTEL_METRICS_EXPORTER": "otlp", "OTEL_LOGS_EXPORTER": "otlp",
 		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317", "OTEL_EXPORTER_OTLP_TIMEOUT": "10000",
+		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://traces:4317", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "grpc",
+		"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "http://logs:4318/v1/logs", "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL": "http/protobuf",
 		"OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "SPAN_ONLY", "KAGENT_OTEL_CAPTURE_RAW_API_BODIES": "true",
 		"KAGENT_OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=prod",
 	} {

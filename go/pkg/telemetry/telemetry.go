@@ -135,12 +135,15 @@ func (p *Providers) TracesEnabled() bool {
 
 // ForceFlush exports buffered spans and metrics, even for a canceled request.
 func (p *Providers) ForceFlush(ctx context.Context) error {
-	if !p.TracesEnabled() {
+	if p == nil || (p.tracer == nil && p.meter == nil) {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), FlushTimeout)
 	defer cancel()
-	err := p.tracer.ForceFlush(ctx)
+	var err error
+	if p.tracer != nil {
+		err = p.tracer.ForceFlush(ctx)
+	}
 	if p.meter != nil {
 		err = errors.Join(err, p.meter.ForceFlush(ctx))
 	}

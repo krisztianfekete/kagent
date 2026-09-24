@@ -8,6 +8,11 @@ from opentelemetry.trace import get_current_span
 from kagent.core.tracing import _utils
 
 
+@pytest.fixture(autouse=True)
+def _metrics_off_unless_asked(monkeypatch):
+    monkeypatch.setenv("OTEL_METRICS_EXPORTER", "none")
+
+
 def test_configure_tracing_logging_enabled_uses_logger_provider(monkeypatch):
     monkeypatch.setenv("OTEL_LOGS_EXPORTER", "otlp")
     monkeypatch.setenv("OTEL_TRACES_EXPORTER", "none")
@@ -415,3 +420,42 @@ def test_post_response_flush_exports_server_span(monkeypatch):
     names = [span.name for span in exporter.get_finished_spans()]
     assert any("POST" in name for name in names), f"server span not exported by flush, got {names}"
     provider.shutdown()
+
+
+def test_configure_exports_metrics_when_enabled(monkeypatch):
+    monkeypatch.setenv("OTEL_TRACES_EXPORTER", "none")
+    monkeypatch.setenv("OTEL_LOGS_EXPORTER", "none")
+    monkeypatch.setenv("OTEL_METRICS_EXPORTER", "otlp")
+    installed = {}
+    monkeypatch.setattr(_utils, "_create_metric_exporter", lambda **kwargs: installed.setdefault("exporter", object()))
+    monkeypatch.setattr(_utils, "PeriodicExportingMetricReader", lambda exporter: ("reader", exporter))
+    monkeypatch.setattr(
+        _utils, "MeterProvider", lambda resource, metric_readers: installed.setdefault("readers", metric_readers)
+    )
+    monkeypatch.setattr(
+        _utils.metrics, "set_meter_provider", lambda provider: installed.setdefault("provider", provider)
+    )
+    flushes = []
+    monkeypatch.setattr(_utils, "_add_post_response_flush", lambda app: flushes.append(app))
+    monkeypatch.setattr(_utils, "_instrument_anthropic", lambda *a, **kw: None)
+    monkeypatch.setattr(_utils, "_instrument_google_generativeai", lambda *a, **kw: None)
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    _utils.configure(name="test", namespace="test", fastapi_app=app)
+
+    assert installed["readers"] == [("reader", installed["exporter"])]
+    assert installed["provider"] is installed["readers"]
+    assert flushes == [app]
+
+
+def test_force_flush_flushes_the_meter_provider(monkeypatch):
+    calls = []
+    monkeypatch.setattr(_utils.trace, "get_tracer_provider", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        _utils.metrics, "get_meter_provider", lambda: SimpleNamespace(force_flush=lambda timeout: calls.append(timeout))
+    )
+
+    _utils.force_flush()
+
+    assert calls == [3000]

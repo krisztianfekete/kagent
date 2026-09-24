@@ -3,7 +3,7 @@ import logging
 import os
 
 from fastapi import FastAPI
-from opentelemetry import _logs, trace
+from opentelemetry import _logs, metrics, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.openai import OpenAIInstrumentor
@@ -11,6 +11,8 @@ from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import OTELResourceDetector, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -50,6 +52,16 @@ def _create_log_exporter(**kwargs):
         from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
     logging.info("Using %s protocol for log exporter", protocol)
     return OTLPLogExporter(**kwargs)
+
+
+def _create_metric_exporter(**kwargs):
+    """Create an OTLPMetricExporter using the protocol from env vars."""
+    protocol = _resolve_otlp_protocol("METRICS")
+    if protocol == "http/protobuf":
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    else:
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+    return OTLPMetricExporter(**kwargs)
 
 
 def _resolve_otlp_timeout_seconds(signal: str) -> float:
@@ -136,22 +148,22 @@ def _environment_propagator() -> CompositePropagator:
 
 
 def force_flush(timeout_millis: int = FLUSH_TIMEOUT_MILLIS) -> None:
-    """Export any spans still buffered in the tracer provider's batch processor.
+    """Export any spans and metrics still buffered in their providers.
 
     Call before a response completes when the process may be suspended right
     afterwards: Agent Substrate checkpoints the actor as soon as the A2A
     response body closes, so unexported spans stay frozen in the snapshot
     until the session's next resume (or forever, for a session's last
-    message). No-op when the provider has no force_flush (tracing disabled).
+    message). No-op for a provider without force_flush (signal disabled).
     """
-    provider = trace.get_tracer_provider()
-    flush = getattr(provider, "force_flush", None)
-    if flush is None:
-        return
-    try:
-        flush(timeout_millis)
-    except Exception:
-        logging.warning("Failed to flush pending spans", exc_info=True)
+    for provider in (trace.get_tracer_provider(), metrics.get_meter_provider()):
+        flush = getattr(provider, "force_flush", None)
+        if flush is None:
+            continue
+        try:
+            flush(timeout_millis)
+        except Exception:
+            logging.warning("Failed to flush pending telemetry", exc_info=True)
 
 
 # High-frequency probe endpoints with nothing worth flushing.
@@ -243,6 +255,7 @@ def configure(
     _defaults.apply()
     set_global_textmap(_environment_propagator())
     tracing_enabled = signal_enabled("TRACES")
+    metrics_enabled = signal_enabled("METRICS")
     logging_enabled = signal_enabled("LOGS")
 
     # Resource.create lets the attributes it is given win, so the environment is
@@ -281,7 +294,14 @@ def configure(
         HTTPXClientInstrumentor().instrument()
         if fastapi_app:
             FastAPIInstrumentor().instrument_app(fastapi_app, excluded_urls=_excluded_urls)
-            _add_post_response_flush(fastapi_app)
+    if metrics_enabled:
+        reader = PeriodicExportingMetricReader(
+            _create_metric_exporter(timeout=_resolve_otlp_timeout_seconds("METRICS"))
+        )
+        metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[reader]))
+        logging.info("Meter provider configured with OTLP")
+    if fastapi_app and (tracing_enabled or metrics_enabled):
+        _add_post_response_flush(fastapi_app)
     # Configure logging if enabled
     if logging_enabled:
         logging.info("Enabling logging for GenAI events")
