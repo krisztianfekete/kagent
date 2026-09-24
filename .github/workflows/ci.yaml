@@ -128,8 +128,8 @@ jobs:
             --set substrateWorkerPool.create=true
             --set substrateWorkerPool.replicas=4
             --set-string substrateWorkerPool.workerImage=ghcr.io/kagent-dev/substrate/ateom-gvisor:v${{ env.SUBSTRATE_VERSION }}
-            --set otel.tracing.enabled=true
-            --set-string otel.tracing.exporter.otlp.endpoint=http://172.17.0.1:14317
+            --set otel.traces.enabled=true
+            --set-string otel.exporter.otlp.endpoint=http://172.17.0.1:14317
         run: |
           # Reuse Blacksmith's persistent layers and Go cache mounts. The Makefile
           # otherwise selects a fresh local builder, discarding that cache.

@@ -1,6 +1,7 @@
 package tracing
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -224,6 +225,18 @@ func (t RuntimeTelemetry) Identity() []attribute.KeyValue {
 		if entry.value != "" {
 			attributes = append(attributes, attribute.String(entry.key, entry.value))
 		}
+	}
+	return attributes
+}
+
+// ResourceDefaults names the service when the environment does not.
+func (t RuntimeTelemetry) ResourceDefaults(fallbackName string) []attribute.KeyValue {
+	var attributes []attribute.KeyValue
+	if name := cmp.Or(t.AgentName, fallbackName); name != "" {
+		attributes = append(attributes, semconv.ServiceNameKey.String(name))
+	}
+	if t.AgentNamespace != "" {
+		attributes = append(attributes, semconv.ServiceNamespaceKey.String(t.AgentNamespace))
 	}
 	return attributes
 }

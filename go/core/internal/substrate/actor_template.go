@@ -9,6 +9,9 @@ import (
 
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	"github.com/kagent-dev/kagent/go/core/internal/translator"
+	"github.com/kagent-dev/kagent/go/pkg/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -48,7 +51,7 @@ func ActorTemplateForRevision(spec *translator.Revision, revisionID translator.R
 	if err != nil {
 		return nil, fmt.Errorf("render runtime Agent Card: %w", err)
 	}
-	environment := append([]corev1.EnvVar(nil), spec.Environment...)
+	environment := withServiceVersion(append([]corev1.EnvVar(nil), spec.Environment...), revisionID.Short())
 	// The systemInfo trustBundle volume below projects the gateway CA. These
 	// variables tell each TLS client to trust it; mounting the file alone does
 	// not configure trust. The gateway intercepts HTTPS even without credentials.
@@ -131,6 +134,17 @@ func actorTemplateSpec(template *ateapipb.ActorTemplate) *ateapipb.ActorTemplate
 		SandboxConfig:   template.GetSandboxConfig(),
 		Resources:       template.GetResources(),
 	}
+}
+
+// withServiceVersion stamps the revision on the runtime resource. The revision
+// digests the environment, so the compiler cannot render it.
+func withServiceVersion(environment []corev1.EnvVar, version string) []corev1.EnvVar {
+	for index, variable := range environment {
+		if variable.Name == tracing.ResourceEnvironmentVariable && variable.ValueFrom == nil {
+			environment[index].Value = tracing.MergeResourceAttributes(variable.Value, []attribute.KeyValue{semconv.ServiceVersion(version)})
+		}
+	}
+	return environment
 }
 
 func revisionActorTemplateName(agentTemplate, harness string, revision translator.RevisionID) string {

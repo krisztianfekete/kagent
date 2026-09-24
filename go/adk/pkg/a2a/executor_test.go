@@ -773,7 +773,7 @@ func TestKAgentExecutor_HITLPauseAndResumeFlow(t *testing.T) {
 // installRecordingTracer routes the global tracer through a batch processor into
 // an in-memory exporter, so a test can tell "buffered" from "exported": only a
 // flush moves spans from the one to the other within the test's lifetime.
-func installRecordingTracer(t *testing.T) *tracetest.InMemoryExporter {
+func installRecordingTracer(t *testing.T) (*tracetest.InMemoryExporter, func(context.Context) error) {
 	t.Helper()
 	exporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter))
@@ -783,12 +783,12 @@ func installRecordingTracer(t *testing.T) *tracetest.InMemoryExporter {
 		otel.SetTracerProvider(prev)
 		_ = tp.Shutdown(context.Background())
 	})
-	return exporter
+	return exporter, tp.ForceFlush
 }
 
 // exportedByState runs one two-event turn and records how many spans the
 // exporter held at the moment each event reached the consumer.
-func exportedByState(t *testing.T, exporter *tracetest.InMemoryExporter) map[a2atype.TaskState]int {
+func exportedByState(t *testing.T, exporter *tracetest.InMemoryExporter, flush func(context.Context) error) map[a2atype.TaskState]int {
 	t.Helper()
 	reqCtx := &a2asrv.ExecutorContext{
 		TaskID: "task-1", ContextID: "ctx-1",
@@ -798,7 +798,7 @@ func exportedByState(t *testing.T, exporter *tracetest.InMemoryExporter) map[a2a
 		a2atype.NewStatusUpdateEvent(reqCtx, a2atype.TaskStateWorking, nil),
 		a2atype.NewStatusUpdateEvent(reqCtx, a2atype.TaskStateCompleted, nil),
 	}}
-	executor := &KAgentExecutor{builtin: builtin, logger: slog.New(slog.DiscardHandler)}
+	executor := &KAgentExecutor{builtin: builtin, logger: slog.New(slog.DiscardHandler), flush: flush}
 
 	seen := map[a2atype.TaskState]int{}
 	for event, err := range executor.Execute(context.Background(), reqCtx) {
@@ -820,10 +820,9 @@ func exportedByState(t *testing.T, exporter *tracetest.InMemoryExporter) map[a2a
 // so the spans must already be exported when the terminal event is yielded, and
 // the invocation span must be among them.
 func TestKAgentExecutor_ExportsSpansBeforeYieldingTheTerminalEvent(t *testing.T) {
-	t.Setenv("KAGENT_PRE_RESPONSE_TRACE_FLUSH", "true")
-	exporter := installRecordingTracer(t)
+	exporter, flush := installRecordingTracer(t)
 
-	seen := exportedByState(t, exporter)
+	seen := exportedByState(t, exporter, flush)
 
 	if seen[a2atype.TaskStateWorking] != 0 {
 		t.Fatalf("spans exported before a working update = %d, want 0 (a mid-turn flush is churn)", seen[a2atype.TaskStateWorking])
@@ -840,16 +839,12 @@ func TestKAgentExecutor_ExportsSpansBeforeYieldingTheTerminalEvent(t *testing.T)
 	}
 }
 
-// Without the opt-in the batch exporter's timer is the export path, as it is
-// everywhere the process is not frozen after a response, and a per-turn flush
-// would add export churn and response-tail latency for nothing.
-func TestKAgentExecutor_LeavesSpansToTheBatcherWithoutTheOptIn(t *testing.T) {
-	t.Setenv("KAGENT_PRE_RESPONSE_TRACE_FLUSH", "")
-	exporter := installRecordingTracer(t)
+func TestKAgentExecutor_LeavesSpansToTheBatcherWithoutAFlusher(t *testing.T) {
+	exporter, _ := installRecordingTracer(t)
 
-	seen := exportedByState(t, exporter)
+	seen := exportedByState(t, exporter, nil)
 
 	if seen[a2atype.TaskStateCompleted] != 0 {
-		t.Fatalf("spans exported before the terminal event = %d, want 0 without KAGENT_PRE_RESPONSE_TRACE_FLUSH", seen[a2atype.TaskStateCompleted])
+		t.Fatalf("spans exported before the terminal event = %d, want 0 without a flusher", seen[a2atype.TaskStateCompleted])
 	}
 }

@@ -41,6 +41,7 @@ type KAgentExecutorConfig struct {
 	AppName        string
 	Logger         *slog.Logger
 	Output         *apiadk.OutputConfig
+	Flush          func(context.Context) error
 }
 
 // KAgentExecutor keeps kagent's request/session glue around the upstream ADK
@@ -51,6 +52,7 @@ type KAgentExecutor struct {
 	appName                 string
 	logger                  *slog.Logger
 	structuredOutputEnabled bool
+	flush                   func(context.Context) error
 }
 
 type structuredOutput struct {
@@ -110,6 +112,7 @@ func NewKAgentExecutor(cfg KAgentExecutorConfig) (*KAgentExecutor, error) {
 		appName:                 cfg.AppName,
 		logger:                  cfg.Logger.With("component", "kagent-executor"),
 		structuredOutputEnabled: output != nil,
+		flush:                   cfg.Flush,
 	}, nil
 }
 
@@ -329,7 +332,7 @@ func (e *KAgentExecutor) Execute(ctx context.Context, reqCtx *a2asrv.ExecutorCon
 			stampStatusMessageTimeline(event)
 			canonicalizeADKEvent(event)
 			if endsTurn(event, err) {
-				flushTurnSpans(ctx, invocationSpan)
+				e.flushTurnSpans(ctx, invocationSpan)
 			}
 			if !yield(event, err) {
 				return
@@ -369,7 +372,7 @@ func endsTurn(event a2atype.Event, err error) bool {
 }
 
 // flushTurnSpans exports the turn's spans before the event that ends the turn
-// leaves the process, when the runtime asked for pre-response flushing.
+// leaves the process.
 //
 // The server-level flush runs once the handler returns. For a unary request that
 // is before the response is written, so it is early enough. For a streaming
@@ -381,12 +384,14 @@ func endsTurn(event a2atype.Event, err error) bool {
 //
 // The invocation span is ended first so it travels in the same export; the
 // deferred End in Execute becomes a no-op.
-func flushTurnSpans(ctx context.Context, invocationSpan trace.Span) {
-	if !telemetry.PreResponseFlushEnabled() {
+func (e *KAgentExecutor) flushTurnSpans(ctx context.Context, invocationSpan trace.Span) {
+	if e.flush == nil {
 		return
 	}
 	invocationSpan.End()
-	telemetry.ForceFlush(ctx)
+	if err := e.flush(ctx); err != nil {
+		e.logger.ErrorContext(ctx, "failed to flush turn telemetry", "error", err)
+	}
 }
 
 // ensureSession ensures that a session exists for the given user and session ID.
