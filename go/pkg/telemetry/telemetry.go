@@ -53,10 +53,12 @@ func WithDefaults(environment []string) []string {
 }
 
 // Options identify the process. The environment wins over Defaults.
+// MetricReaders are added beside the reader the environment configures.
 type Options struct {
 	Runtime        string
 	Defaults       []attribute.KeyValue
 	SpanProcessors []sdktrace.SpanProcessor
+	MetricReaders  []sdkmetric.Reader
 }
 
 // Providers holds the SDK providers Init installed, nil for a disabled signal.
@@ -101,10 +103,18 @@ func Init(ctx context.Context, opts Options) (*Providers, error) {
 		providers.tracer = sdktrace.NewTracerProvider(append(options, sdktrace.WithBatcher(exporter))...)
 		otel.SetTracerProvider(providers.tracer)
 	}
+	readers := slices.Clone(opts.MetricReaders)
 	if reader, err := autoexport.NewMetricReader(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("metrics: %w", err))
 	} else if !autoexport.IsNoneMetricReader(reader) {
-		providers.meter = sdkmetric.NewMeterProvider(sdkmetric.WithResource(res), sdkmetric.WithReader(reader))
+		readers = append(readers, reader)
+	}
+	if len(readers) > 0 {
+		options := []sdkmetric.Option{sdkmetric.WithResource(res)}
+		for _, reader := range readers {
+			options = append(options, sdkmetric.WithReader(reader))
+		}
+		providers.meter = sdkmetric.NewMeterProvider(options...)
 		otel.SetMeterProvider(providers.meter)
 	}
 	if exporter, err := autoexport.NewLogExporter(ctx); err != nil {

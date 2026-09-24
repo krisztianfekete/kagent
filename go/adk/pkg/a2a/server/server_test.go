@@ -24,19 +24,17 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
-
-	"github.com/kagent-dev/kagent/go/adk/pkg/telemetry"
 )
 
-// substrateExecutor mimics KAgentExecutor's telemetry: it starts the
-// invocation span from the request-derived context. It does not flush —
-// exporting everything (including the otelhttp server span, still open
-// until the mux handler returns) is the server's flushing handler's job.
+// substrateExecutor stands in for an ADK turn: it opens the invoke_agent span
+// ADK emits beneath the request span. It does not flush; exporting everything,
+// including the otelhttp server span that stays open until the mux handler
+// returns, is the server's flushing handler's job.
 type substrateExecutor struct{ finalState a2atype.TaskState }
 
 func (e substrateExecutor) Execute(ctx context.Context, reqCtx *a2asrv.ExecutorContext) iter.Seq2[a2atype.Event, error] {
 	return func(yield func(a2atype.Event, error) bool) {
-		_, span := telemetry.StartInvocationSpan(ctx)
+		_, span := otel.Tracer("adk-test").Start(ctx, adkInvokeAgentSpan)
 		defer span.End()
 
 		if !yield(a2atype.NewSubmittedTask(reqCtx, reqCtx.Message), nil) {
@@ -218,7 +216,9 @@ func runA2ARequest(t *testing.T, flush bool) tracetest.SpanStubs {
 	return exporter.GetSpans()
 }
 
-// The interceptor-owned request span and its invocation descendants are ended
+const adkInvokeAgentSpan = "invoke_agent root"
+
+// The interceptor-owned request span and its ADK descendants are ended
 // and flushed at the quiescent event. The otelhttp span remains open until its
 // handler returns so it can retain response attributes.
 func TestSpansExportedBeforeResponseBodyCloses(t *testing.T) {
@@ -227,8 +227,8 @@ func TestSpansExportedBeforeResponseBodyCloses(t *testing.T) {
 	for _, span := range spans {
 		exported[span.Name] = span
 	}
-	if _, ok := exported["invocation"]; !ok {
-		t.Errorf("invocation span not exported before body close, got %v", exported)
+	if _, ok := exported[adkInvokeAgentSpan]; !ok {
+		t.Errorf("ADK invoke_agent span not exported before body close, got %v", exported)
 	}
 	if _, ok := exported["a2a.request"]; !ok {
 		t.Errorf("A2A request span not exported before body close, got %v", exported)
@@ -251,8 +251,8 @@ func TestSpansExportedBeforeResponseBodyCloses(t *testing.T) {
 	if requestSpan.Parent.SpanID() != httpSpan.SpanContext.SpanID() {
 		t.Errorf("A2A request parent = %s, want HTTP span %s", requestSpan.Parent.SpanID(), httpSpan.SpanContext.SpanID())
 	}
-	if invocation := exported["invocation"]; invocation.Parent.SpanID() != requestSpan.SpanContext.SpanID() {
-		t.Errorf("invocation parent = %s, want A2A request span %s", invocation.Parent.SpanID(), requestSpan.SpanContext.SpanID())
+	if agent := exported[adkInvokeAgentSpan]; agent.Parent.SpanID() != requestSpan.SpanContext.SpanID() {
+		t.Errorf("ADK invoke_agent parent = %s, want A2A request span %s", agent.Parent.SpanID(), requestSpan.SpanContext.SpanID())
 	}
 }
 

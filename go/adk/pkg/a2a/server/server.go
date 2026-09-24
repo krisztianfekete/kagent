@@ -19,6 +19,8 @@ import (
 	a2agrpc "github.com/a2aproject/a2a-go/v2/a2agrpc/v1"
 	a2apb "github.com/a2aproject/a2a-go/v2/a2apb/v1"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/filters"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -87,20 +89,16 @@ func NewA2AServer(agentCard a2atype.AgentCard, executor a2asrv.AgentExecutor, lo
 	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(&agentCard))
 	mux.Handle("/", jsonrpcHandler)
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler(
+		otelgrpc.WithFilter(filters.Not(filters.HealthCheck())))))
 	a2agrpc.NewHandler(requestHandler).RegisterWith(grpcServer)
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus(a2apb.A2AService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
-	handlerMux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
-			grpcServer.ServeHTTP(w, r)
-			return
-		}
-		mux.ServeHTTP(w, r)
-	})
-	// Health and agent-card requests are neither traced nor flushed; only A2A
-	// requests get an inbound server span and a span flush.
+	isGRPC := func(r *http.Request) bool {
+		return r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc")
+	}
+	// Health and agent-card requests are neither traced nor flushed.
 	isA2ARequest := func(r *http.Request) bool {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/grpc.health.v1.Health/"):
@@ -111,23 +109,23 @@ func NewA2AServer(agentCard a2atype.AgentCard, executor a2asrv.AgentExecutor, lo
 			return true
 		}
 	}
-	// Wrap the whole server mux to enable trace context extraction and an inbound
-	// HTTP server span for each request.
-	instrumentedHandler := otelhttp.NewHandler(
-		handlerMux,
-		"a2a-server",
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-			return r.Method + " " + r.URL.Path
-		}),
-		otelhttp.WithFilter(isA2ARequest),
-	)
+	// gRPC calls get their SERVER span from otelgrpc, so otelhttp sees only
+	// the JSON-RPC and HTTP paths.
+	httpHandler := otelhttp.NewHandler(mux, "a2a-server", otelhttp.WithFilter(isA2ARequest))
+	routed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isGRPC(r) {
+			grpcServer.ServeHTTP(w, r)
+			return
+		}
+		httpHandler.ServeHTTP(w, r)
+	})
 	// Flush again on handler return for errors and non-quiescent responses.
 	// Quiescent events must flush earlier: the gateway may suspend or pause
 	// the actor immediately upon receiving the event, before HTTP body close.
-	handler := http.Handler(instrumentedHandler)
+	handler := http.Handler(routed)
 	if config.Flush != nil {
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			instrumentedHandler.ServeHTTP(w, r)
+			routed.ServeHTTP(w, r)
 			if isA2ARequest(r) {
 				if err := config.Flush(r.Context()); err != nil {
 					logger.ErrorContext(r.Context(), "failed to flush traces after A2A handler", "error", err)
