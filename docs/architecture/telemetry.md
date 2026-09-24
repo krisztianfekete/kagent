@@ -187,7 +187,8 @@ completion exports spans and metrics before that event is yielded. On a
 terminal event the gateway drains the runtime stream, for up to two seconds,
 before it suspends the Actor. The export
 waits at most three seconds, so an unreachable collector costs at most that
-once per segment. It does nothing when traces are off.
+once per segment: after a failed flush, later flushes in the same request are
+skipped. It does nothing when traces are off.
 
 A segment records `abandoned` when the A2A event consumer stopped accepting
 events before execution finished, and `interrupted` when the execution context

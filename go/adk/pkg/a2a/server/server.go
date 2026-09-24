@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/health"
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/kagent-dev/kagent/go/pkg/telemetry"
 	"github.com/kagent-dev/kagent/go/pkg/tracing"
 )
 
@@ -125,11 +126,17 @@ func NewA2AServer(agentCard a2atype.AgentCard, executor a2asrv.AgentExecutor, lo
 	handler := http.Handler(routed)
 	if config.Flush != nil {
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !isA2ARequest(r) {
+				routed.ServeHTTP(w, r)
+				return
+			}
+			// One flush record per request: after the quiescent flush fails, the
+			// handler-return flush is skipped, so the stream ends without a second
+			// flush budget and the gateway's drain stays short.
+			r = r.WithContext(telemetry.WithFlushRecord(r.Context()))
 			routed.ServeHTTP(w, r)
-			if isA2ARequest(r) {
-				if err := config.Flush(r.Context()); err != nil {
-					logger.ErrorContext(r.Context(), "failed to flush traces after A2A handler", "error", err)
-				}
+			if err := config.Flush(r.Context()); err != nil {
+				logger.ErrorContext(r.Context(), "failed to flush traces after A2A handler", "error", err)
 			}
 		})
 	}

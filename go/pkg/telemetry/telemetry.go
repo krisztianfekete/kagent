@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/contrib/exporters/autoexport"
@@ -143,9 +144,22 @@ func (p *Providers) TracesEnabled() bool {
 	return p != nil && p.tracer != nil
 }
 
+type flushRecordKey struct{}
+
+// WithFlushRecord marks ctx as one request. Once a ForceFlush under it fails,
+// later ones return at once, so an unreachable collector costs one
+// FlushTimeout per request instead of one per flush.
+func WithFlushRecord(ctx context.Context) context.Context {
+	return context.WithValue(ctx, flushRecordKey{}, new(atomic.Bool))
+}
+
 // ForceFlush exports buffered spans and metrics, even for a canceled request.
 func (p *Providers) ForceFlush(ctx context.Context) error {
 	if p == nil || (p.tracer == nil && p.meter == nil) {
+		return nil
+	}
+	failed, _ := ctx.Value(flushRecordKey{}).(*atomic.Bool)
+	if failed != nil && failed.Load() {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), FlushTimeout)
@@ -156,6 +170,9 @@ func (p *Providers) ForceFlush(ctx context.Context) error {
 	}
 	if p.meter != nil {
 		err = errors.Join(err, p.meter.ForceFlush(ctx))
+	}
+	if err != nil && failed != nil {
+		failed.Store(true)
 	}
 	return err
 }
