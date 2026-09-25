@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
@@ -558,5 +559,73 @@ func TestUnreachableCollectorCostsOneFlushBudgetPerRequest(t *testing.T) {
 	}
 	if limit := telemetry.FlushTimeout + time.Second; elapsed > limit {
 		t.Fatalf("request took %s with an unreachable collector, want at most %s", elapsed, limit)
+	}
+}
+
+// grpc-go ends the SERVER span in stats.End, which can run after ServeHTTP
+// returns. Every streamed call must still have its SERVER span exported by the
+// time the client sees the end of the stream, since the gateway may suspend the
+// Actor then.
+func TestGRPCServerSpanExportedBeforeStreamEnds(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exporter, sdktrace.WithBatchTimeout(time.Hour)))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		_ = tp.Shutdown(context.Background())
+	})
+	srv, err := NewA2AServer(a2atype.AgentCard{}, substrateExecutor{}, slog.New(slog.DiscardHandler),
+		ServerConfig{Port: "0", Flush: tp.ForceFlush})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testServer := httptest.NewUnstartedServer(srv.httpServer.Handler)
+	testServer.Config.Protocols = srv.httpServer.Protocols
+	testServer.Start()
+	conn, err := grpc.NewClient(testServer.Listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = conn.Close()
+		srv.grpcServer.Stop()
+		testServer.Close()
+	})
+	client := a2apb.NewA2AServiceClient(conn)
+	request, err := pbconv.ToProtoSendMessageRequest(&a2atype.SendMessageRequest{
+		Message: a2atype.NewMessage(a2atype.MessageRoleUser, a2atype.NewTextPart("hi")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const calls = 300
+	missed := 0
+	for i := range calls {
+		stream, err := client.SendStreamingMessage(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			if _, err := stream.Recv(); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		}
+		servers := 0
+		for _, span := range exporter.GetSpans() {
+			if span.SpanKind == trace.SpanKindServer {
+				servers++
+			}
+		}
+		if servers != i+1 {
+			missed++
+			// Let the late span land so later iterations count correctly.
+			_ = tp.ForceFlush(t.Context())
+		}
+	}
+	if missed != 0 {
+		t.Fatalf("%d of %d streams ended before their SERVER span was exported", missed, calls)
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/stats"
 
 	"github.com/kagent-dev/kagent/go/pkg/telemetry"
 	"github.com/kagent-dev/kagent/go/pkg/tracing"
@@ -90,8 +91,8 @@ func NewA2AServer(agentCard a2atype.AgentCard, executor a2asrv.AgentExecutor, lo
 	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(&agentCard))
 	mux.Handle("/", jsonrpcHandler)
 
-	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler(
-		otelgrpc.WithFilter(filters.Not(filters.HealthCheck())))))
+	grpcServer := grpc.NewServer(grpc.StatsHandler(rpcEndSignal{otelgrpc.NewServerHandler(
+		otelgrpc.WithFilter(filters.Not(filters.HealthCheck())))}))
 	a2agrpc.NewHandler(requestHandler).RegisterWith(grpcServer)
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus(a2apb.A2AService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
@@ -133,8 +134,18 @@ func NewA2AServer(agentCard a2atype.AgentCard, executor a2asrv.AgentExecutor, lo
 			// One flush record per request: after the quiescent flush fails, the
 			// handler-return flush is skipped, so the stream ends without a second
 			// flush budget and the gateway's drain stays short.
-			r = r.WithContext(telemetry.WithFlushRecord(r.Context()))
+			ended := make(chan struct{})
+			r = r.WithContext(context.WithValue(telemetry.WithFlushRecord(r.Context()), rpcEndedKey{}, ended))
 			routed.ServeHTTP(w, r)
+			// grpc-go returns from ServeHTTP before the stream goroutine runs
+			// stats.End, where otelgrpc ends the SERVER span. The response is
+			// finished only when this handler returns, so wait for it here.
+			if isGRPC(r) {
+				select {
+				case <-ended:
+				case <-time.After(rpcEndWait):
+				}
+			}
 			if err := config.Flush(r.Context()); err != nil {
 				logger.ErrorContext(r.Context(), "failed to flush traces after A2A handler", "error", err)
 			}
@@ -168,6 +179,25 @@ func NewA2AServer(agentCard a2atype.AgentCard, executor a2asrv.AgentExecutor, lo
 		logger:       logger,
 		config:       config,
 	}, nil
+}
+
+// rpcEndWait bounds the wait for stats.End, for a call that never starts a
+// stream and so never ends one.
+const rpcEndWait = 500 * time.Millisecond
+
+type rpcEndedKey struct{}
+
+// rpcEndSignal closes the request's channel once the wrapped handler has
+// processed stats.End.
+type rpcEndSignal struct{ stats.Handler }
+
+func (h rpcEndSignal) HandleRPC(ctx context.Context, rpcStats stats.RPCStats) {
+	h.Handler.HandleRPC(ctx, rpcStats)
+	if _, ok := rpcStats.(*stats.End); ok {
+		if ended, _ := ctx.Value(rpcEndedKey{}).(chan struct{}); ended != nil {
+			close(ended)
+		}
+	}
 }
 
 func getMaxContentLength(logger *slog.Logger) *int64 {
