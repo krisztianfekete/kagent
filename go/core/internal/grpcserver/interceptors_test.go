@@ -13,7 +13,6 @@ import (
 	"github.com/kagent-dev/kagent/go/core/internal/database"
 	"github.com/kagent-dev/kagent/go/core/internal/service/serviceerrors"
 	pkgauth "github.com/kagent-dev/kagent/go/core/pkg/auth"
-	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -288,55 +287,4 @@ func TestRecoverUnaryInterceptor(t *testing.T) {
 	if got := status.Convert(err).Message(); got != "internal server error" {
 		t.Fatalf("message = %q", got)
 	}
-}
-
-// A nil Registerer is the trap this documents: newServerMetrics still returns
-// working counters, the interceptors still record every call, and nothing is
-// registered anywhere, so no scrape ever sees them. app.Run therefore passes
-// controller-runtime's registry, the one the manager's metrics server serves.
-func TestServerMetricsWithoutARegistererRecordsButExposesNothing(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics, err := newServerMetrics(nil)
-	if err != nil {
-		t.Fatalf("newServerMetrics(nil) error = %v", err)
-	}
-	if _, err := metrics.unaryInterceptor(t.Context(), nil, &grpc.UnaryServerInfo{FullMethod: readMethod}, func(context.Context, any) (any, error) {
-		return nil, nil
-	}); err != nil {
-		t.Fatalf("call error = %v", err)
-	}
-	families, err := registry.Gather()
-	if err != nil {
-		t.Fatalf("registry.Gather() error = %v", err)
-	}
-	if len(families) != 0 {
-		t.Fatalf("a registry the metrics were not registered with gathered %d families, want 0", len(families))
-	}
-}
-
-func TestServerMetricsUnaryInterceptor(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics, err := newServerMetrics(registry)
-	if err != nil {
-		t.Fatalf("newServerMetrics() error = %v", err)
-	}
-	_, callErr := metrics.unaryInterceptor(t.Context(), nil, &grpc.UnaryServerInfo{FullMethod: readMethod}, func(context.Context, any) (any, error) {
-		return nil, status.Error(codes.NotFound, "missing")
-	})
-	if status.Code(callErr) != codes.NotFound {
-		t.Fatalf("call code = %v", status.Code(callErr))
-	}
-	families, err := registry.Gather()
-	if err != nil {
-		t.Fatalf("registry.Gather() error = %v", err)
-	}
-	for _, family := range families {
-		if family.GetName() == "kagent_grpc_server_requests_total" {
-			if got := family.GetMetric()[0].GetCounter().GetValue(); got != 1 {
-				t.Fatalf("request counter = %v, want 1", got)
-			}
-			return
-		}
-	}
-	t.Fatal("request counter metric was not gathered")
 }

@@ -16,7 +16,6 @@ import (
 	"github.com/kagent-dev/kagent/go/core/internal/service/serviceerrors"
 	"github.com/kagent-dev/kagent/go/core/pkg/auth"
 	"github.com/kagent-dev/kagent/go/pkg/logging"
-	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -210,63 +209,4 @@ type contextServerStream struct {
 
 func (s *contextServerStream) Context() context.Context {
 	return s.ctx
-}
-
-type serverMetrics struct {
-	requests *prometheus.CounterVec
-	duration *prometheus.HistogramVec
-}
-
-func newServerMetrics(registerer prometheus.Registerer) (*serverMetrics, error) {
-	metrics := &serverMetrics{
-		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "kagent_grpc_server_requests_total",
-			Help: "Total number of completed kagent gRPC requests.",
-		}, []string{"method", "rpc_type", "code"}),
-		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "kagent_grpc_server_request_duration_seconds",
-			Help:    "Duration of completed kagent gRPC requests in seconds.",
-			Buckets: prometheus.DefBuckets,
-		}, []string{"method", "rpc_type"}),
-	}
-	if registerer == nil {
-		return metrics, nil
-	}
-	if err := registerCollector(registerer, metrics.requests); err != nil {
-		return nil, err
-	}
-	if err := registerCollector(registerer, metrics.duration); err != nil {
-		return nil, err
-	}
-	return metrics, nil
-}
-
-func registerCollector(registerer prometheus.Registerer, collector prometheus.Collector) error {
-	if err := registerer.Register(collector); err != nil {
-		var alreadyRegistered prometheus.AlreadyRegisteredError
-		if errors.As(err, &alreadyRegistered) {
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
-func (m *serverMetrics) unaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	start := time.Now()
-	response, err := handler(ctx, req)
-	m.observe(info.FullMethod, "unary", start, err)
-	return response, err
-}
-
-func (m *serverMetrics) streamInterceptor(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	start := time.Now()
-	err := handler(srv, stream)
-	m.observe(info.FullMethod, "stream", start, err)
-	return err
-}
-
-func (m *serverMetrics) observe(method, rpcType string, start time.Time, err error) {
-	m.requests.WithLabelValues(method, rpcType, status.Code(err).String()).Inc()
-	m.duration.WithLabelValues(method, rpcType).Observe(time.Since(start).Seconds())
 }
