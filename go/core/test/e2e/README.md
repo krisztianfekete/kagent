@@ -1,5 +1,34 @@
 # End-to-end tests
 
+The standalone sandbox suite needs a Substrate WorkerPool with available capacity.
+Set `controller.sandbox.guestImage.registry`, `.repository`, and `.digest` to the
+guest image built for the test. The controller passes the pinned image reference
+unchanged to Substrate.
+It creates and cleans up its own SandboxTemplates. Run from `go/`:
+
+```sh
+KAGENT_E2E_API_URL=http://<controller-address>:8083 \
+KAGENT_E2E_SANDBOX_NAMESPACE=kagent \
+KAGENT_E2E_SANDBOX_WORKER_POOL=kagent-default \
+KAGENT_E2E_RUNTIME_IMAGE=<digest-pinned-go-adk-image> \
+  go test ./core/test/e2e -run '^TestSandbox' -v -count=1 -timeout 15m
+```
+
+The controller restart test needs a stable service endpoint (NodePort or ingress);
+`kubectl port-forward` exits when the selected pod is replaced. The suite tests
+public gRPC/MCP calls, owner isolation, binary files, process execution/output,
+suspend/resume, expiration, template revision retention, and controller restart.
+The agent test uses the Helm-installed `kagent-api` RemoteMCPServer, a deterministic
+local model, and a real Go ADK Session to create a sandbox through MCP as its
+invoking user. Install the chart as release `kagent` in the test namespace with
+its default naming; the test requires that registration and leaves it intact.
+Once a cluster API URL is set, missing `KAGENT_E2E_RUNTIME_IMAGE` fails the tests
+before provisioning. The same digest-pinned Go ADK image supplies both the agent
+runtime and sandbox tools.
+Preparation and runtime failures also fail the tests. CI builds the guest image
+separately and passes its digest to Helm before installing. Substrate rewrites
+the runner's `localhost:5001` registry address when workers pull the image.
+
 The suite exercises the public API against a clean Kind installation. It does
 not reconcile Kubernetes resources itself: installation creates the Harness
 fixtures, and each test owns the templates and API resources it creates.
