@@ -326,9 +326,13 @@ func agentConfigDestinations(cfg *adk.AgentConfig, modelConfig *v1alpha3.ModelCo
 		destinations = append(destinations, "https://api.anthropic.com:443")
 	case v1alpha3.ModelProviderGemini:
 		destinations = append(destinations, "https://generativelanguage.googleapis.com:443")
+	case v1alpha3.ModelProviderMistral:
+		if mistral := modelConfig.Spec.Mistral; mistral == nil || mistral.BaseURL == nil || *mistral.BaseURL == "" {
+			destinations = append(destinations, "https://api.mistral.ai:443")
+		}
 	case v1alpha3.ModelProviderOllama:
 		// Ollama's endpoint is the provider's own field and is not part of the
-		// serialized model, so the walk above never sees it. Unlike the three
+		// serialized model, so the walk above never sees it. Unlike the
 		// providers above there is no default to fall back on: the host is the
 		// operator's, so it has to be read from the spec.
 		if ollama := modelConfig.Spec.Ollama; ollama != nil {
