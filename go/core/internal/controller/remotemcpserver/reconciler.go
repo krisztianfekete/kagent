@@ -60,23 +60,15 @@ type ToolDiscoverer interface {
 	ListTools(context.Context, toolservice.MCPServerRef) ([]toolservice.MCPAppTool, error)
 }
 
-// CatalogStore keeps the gRPC ToolService catalog aligned with Kubernetes status.
-// RemoteMCPServer status remains the source used by harness compilers, while the
-// database projection serves list RPCs without making those RPCs perform discovery.
-type CatalogStore interface {
-	RefreshToolServer(context.Context, *database.ToolServer, ...*v1alpha3.MCPTool) error
-	DeleteToolServer(context.Context, string, string) error
-}
-
 // Reconciler publishes RemoteMCPServer discovery results to its status.
 type Reconciler struct {
 	client     client.Client
 	discoverer ToolDiscoverer
-	catalog    CatalogStore
+	catalog    *toolcatalog.Publisher
 }
 
-func New(client client.Client, discoverer ToolDiscoverer, catalog CatalogStore) *Reconciler {
-	return &Reconciler{client: client, discoverer: discoverer, catalog: catalog}
+func New(client client.Client, discoverer ToolDiscoverer, catalog toolcatalog.Store) *Reconciler {
+	return &Reconciler{client: client, discoverer: discoverer, catalog: toolcatalog.NewPublisher(catalog)}
 }
 
 func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
@@ -98,7 +90,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		if !apierrors.IsNotFound(err) {
 			return reconcile.Result{}, err
 		}
-		return reconcile.Result{}, r.catalog.DeleteToolServer(ctx, request.String(), remoteGroupKind)
+		return reconcile.Result{}, r.catalog.Delete(ctx, request.String(), remoteGroupKind)
 	}
 
 	if discoveryDisabled(server) {
@@ -161,7 +153,7 @@ func (r *Reconciler) updateCatalog(ctx context.Context, server *v1alpha3.RemoteM
 		now := time.Now().UTC()
 		lastConnected = &now
 	}
-	return r.catalog.RefreshToolServer(ctx, &database.ToolServer{
+	return r.catalog.Refresh(ctx, server.UID, &database.ToolServer{
 		Name: name, GroupKind: remoteGroupKind, Description: server.Spec.Description, LastConnected: lastConnected,
 	}, tools...)
 }

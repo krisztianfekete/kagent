@@ -44,12 +44,14 @@ type fakeDiscoverer struct {
 }
 
 type fakeCatalog struct {
+	writes  int
 	server  *database.ToolServer
 	tools   []*v1alpha3.MCPTool
 	deleted string
 }
 
 func (f *fakeCatalog) RefreshToolServer(_ context.Context, server *database.ToolServer, tools ...*v1alpha3.MCPTool) error {
+	f.writes++
 	f.server = server
 	f.tools = tools
 	return nil
@@ -103,6 +105,11 @@ func TestReconcilePublishesSortedDiscovery(t *testing.T) {
 	}
 	if len(catalog.tools) != 2 || catalog.tools[0].Name != "alpha" || catalog.tools[1].Name != "zeta" {
 		t.Fatalf("catalog tools = %#v", catalog.tools)
+	}
+	discoverer.tools[0], discoverer.tools[1] = discoverer.tools[1], discoverer.tools[0]
+	_, err = reconciler.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(server)})
+	if err != nil || discoverer.calls != 2 || catalog.writes != 1 {
+		t.Fatalf("unchanged discovery: error = %v, discovery calls = %d, catalog writes = %d", err, discoverer.calls, catalog.writes)
 	}
 }
 

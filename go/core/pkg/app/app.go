@@ -286,7 +286,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err := manager.Add(reconciler); err != nil {
 		return fmt.Errorf("add reconciler to controller manager: %w", err)
 	}
-	if err := manager.Add(v2controller.NewRuntimeRevisionGC(store, actors)); err != nil {
+	if err := manager.Add(v2controller.NewRuntimeRevisionGC(store, actors, kagentenv.RuntimeRevisionGCInterval.Get())); err != nil {
 		return fmt.Errorf("add runtime revision GC to controller manager: %w", err)
 	}
 	if opts.SetupWithManager != nil {
@@ -340,11 +340,11 @@ func Run(ctx context.Context, opts Options) error {
 	interactions := sessionsvc.NewInteractionService(store, agents, sessions)
 	gateway := a2agateway.New(interactions, gatewayDialer, cmp.Or(kagentenv.KagentGatewayURL.Get(), "http://127.0.0.1:8083"))
 	schedules := scheduledrun.NewService(store, manager.GetClient(), authorizer)
-	if err := manager.Add(scheduledruncontroller.NewScheduler(store)); err != nil {
+	if err := manager.Add(scheduledruncontroller.NewScheduler(store, kagentenv.ScheduledRunPollInterval.Get())); err != nil {
 		return fmt.Errorf("add scheduled run scheduler: %w", err)
 	}
 	if err := manager.Add(scheduledruncontroller.NewController(store, sessionWorkflow,
-		gateway)); err != nil {
+		gateway, kagentenv.ScheduledRunExecutionPollInterval.Get())); err != nil {
 		return fmt.Errorf("add scheduled run controller: %w", err)
 	}
 	sandboxTemplates := kubecrud.NewService(manager.GetClient(), authorizer, &kagentv1alpha3.SandboxTemplate{}, &kagentv1alpha3.SandboxTemplateList{}, kagentv1alpha3.SandboxTemplateKind)
@@ -366,7 +366,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	sandboxes, err := sandboxservice.NewService(sandboxservice.Config{Store: store, Kube: manager.GetClient(), Authorizer: authorizer, Actors: actors, Guests: guests,
-		DefaultTTL: kagentenv.SandboxDefaultTTL.Get(), MaxTTL: kagentenv.SandboxMaxTTL.Get()})
+		DefaultTTL: kagentenv.SandboxDefaultTTL.Get(), MaxTTL: kagentenv.SandboxMaxTTL.Get(), ExpirationPollInterval: kagentenv.SandboxExpirationPollInterval.Get()})
 	if err != nil {
 		return err
 	}

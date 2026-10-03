@@ -128,11 +128,15 @@ This reference covers user-configurable settings for the controller, CLI, standa
 | `KAGENT_POSTGRES_DATABASE_MIN_CONNS` | Integer | `0` | Minimum size of the PostgreSQL connection pool |
 | `KAGENT_POSTGRES_DATABASE_URL` | String | `postgres://postgres:kagent@kagent-postgresql.kagent.svc.cluster.local:5432/postgres` | PostgreSQL connection URL. The default applies only to the controller; kagent db requires this variable or --db-url. Helm supplies its configured connection URL. |
 | `KAGENT_POSTGRES_DATABASE_URL_FILE` | String | `(none)` | File containing the PostgreSQL connection URL; takes precedence over KAGENT_POSTGRES_DATABASE_URL in the controller. |
+| `KAGENT_RUNTIME_REVISION_GC_INTERVAL` | Duration | `1m0s` | Interval between unreferenced runtime revision cleanup sweeps. Must be positive. |
 | `KAGENT_SANDBOX_CPU` | String | `1` | CPU limit for standalone sandbox runtimes. |
 | `KAGENT_SANDBOX_DEFAULT_TTL` | Duration | `1h0m0s` | Default standalone sandbox lifetime. |
+| `KAGENT_SANDBOX_EXPIRATION_POLL_INTERVAL` | Duration | `1s` | Interval between expired sandbox cleanup batches. Must be positive; longer intervals delay deletion after TTL expiry. |
 | `KAGENT_SANDBOX_GUEST_IMAGE` | String | `(none)` | Guest package image pinned by sha256 digest. Required for sandbox preparation and passed unchanged to Substrate. |
 | `KAGENT_SANDBOX_MAX_TTL` | Duration | `24h0m0s` | Maximum standalone sandbox lifetime, at most 24h. |
 | `KAGENT_SANDBOX_MEMORY` | String | `1Gi` | Memory limit for standalone sandbox runtimes. |
+| `KAGENT_SCHEDULED_RUN_EXECUTION_POLL_INTERVAL` | Duration | `1s` | Interval between scheduled execution reconciliation attempts. Must be positive; longer intervals delay dispatch, status updates, deadline enforcement, and cleanup. |
+| `KAGENT_SCHEDULED_RUN_POLL_INTERVAL` | Duration | `1s` | Interval between reserving due scheduled runs. Must be positive; occurrences more than 30 seconds late are skipped. |
 | `KAGENT_SESSION_EXPIRATION_POLL_INTERVAL` | Duration | `1m0s` | Interval between idle session expiration sweeps. Must be positive. |
 | `KAGENT_SESSION_IDLE_TTL` | Duration | `168h0m0s` | Delete sessions after this idle duration. Zero disables expiration; running and waiting tasks are retained. |
 | `KAGENT_SESSION_SHARE_MAX_TTL` | Duration | `0s` | Longest lifetime a session share may request. Shares created without a ttl receive it. Zero leaves shares unbounded. |

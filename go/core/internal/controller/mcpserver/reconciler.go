@@ -57,22 +57,16 @@ type ToolDiscoverer interface {
 	ListTools(context.Context, toolservice.MCPServerRef) ([]toolservice.MCPAppTool, error)
 }
 
-// CatalogStore persists the ToolService projection of an MCPServer.
-type CatalogStore interface {
-	RefreshToolServer(context.Context, *database.ToolServer, ...*v1alpha3.MCPTool) error
-	DeleteToolServer(context.Context, string, string) error
-}
-
 // Reconciler keeps the catalog projection of KMCP-owned MCPServers current. It
 // deliberately does not write MCPServer status, which is owned by KMCP.
 type Reconciler struct {
 	client     client.Client
 	discoverer ToolDiscoverer
-	catalog    CatalogStore
+	catalog    *toolcatalog.Publisher
 }
 
-func New(client client.Client, discoverer ToolDiscoverer, catalog CatalogStore) *Reconciler {
-	return &Reconciler{client: client, discoverer: discoverer, catalog: catalog}
+func New(client client.Client, discoverer ToolDiscoverer, catalog toolcatalog.Store) *Reconciler {
+	return &Reconciler{client: client, discoverer: discoverer, catalog: toolcatalog.NewPublisher(catalog)}
 }
 
 func (r *Reconciler) SetupWithManager(manager ctrl.Manager) error {
@@ -131,7 +125,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		if !apierrors.IsNotFound(err) {
 			return reconcile.Result{}, fmt.Errorf("get MCPServer %s: %w", request.String(), err)
 		}
-		return reconcile.Result{}, r.catalog.DeleteToolServer(ctx, request.String(), mcpServerGroupKind)
+		return reconcile.Result{}, r.catalog.Delete(ctx, request.String(), mcpServerGroupKind)
 	}
 
 	if discoveryDisabled(server) {
@@ -196,7 +190,7 @@ func (r *Reconciler) updateCatalog(ctx context.Context, server *kmcp.MCPServer, 
 		now := time.Now().UTC()
 		lastConnected = &now
 	}
-	return r.catalog.RefreshToolServer(ctx, &database.ToolServer{
+	return r.catalog.Refresh(ctx, server.UID, &database.ToolServer{
 		Name: name, GroupKind: mcpServerGroupKind, Description: "N/A", LastConnected: lastConnected,
 	}, tools...)
 }
