@@ -32,7 +32,9 @@ install:
   kagent:
     valuesFiles: [kagent-values.yaml]
 database:
-  urlFile: secrets/postgres-url
+  owner:
+    urlFile: secrets/postgres-owner-url
+    role: kagent_owner
 ```
 
 ```bash
@@ -44,7 +46,8 @@ kagent config schema --component controller
 `schema` emits a protobuf descriptor set with validation annotations. `view`
 prints resolved settings and file references, never secret file contents. These
 commands make no service connections. Database credentials are opened only by
-database commands; `--db-url-file` overrides the configured reference.
+database commands, which connect as `database.owner`; `--db-url-file` and
+`--db-role` override its configured values.
 
 `install.bundledPostgresImage` selects the development PostgreSQL image, including
 mirrors.
@@ -69,8 +72,12 @@ server:
   auth:
     mode: insecure
 database:
-  urlFile: secrets/database-url
-  role: kagent_owner
+  owner:
+    urlFile: secrets/database-owner-url
+    role: kagent_owner
+  readWrite:
+    urlFile: secrets/database-readwrite-url
+    role: kagent_readwrite
   schema: kagent
   vectorSchema: extensions
   skipMigrations: false
@@ -87,9 +94,11 @@ runtimeDefaults:
     level: info
 ```
 
-The controller applies database migrations at startup by default. Set
-`database.skipMigrations: true` when migrations are applied out-of-band. Startup
-still verifies that all required migrations are applied and fails if any are missing.
+The controller connects with two logins. `database.owner` applies migrations at
+startup; `database.readWrite` serves every runtime query. Each assumes its `role`
+after connecting. Set `database.skipMigrations: true` when migrations are applied
+out-of-band; the owner login is then not needed, and startup still verifies,
+through the read/write login, that all required migrations are applied.
 
 Push JWT signing is optional: `gateway.push.signingPrivateKeyFile` names an
 unencrypted PKCS#8 Ed25519 PEM key when enabled. Helm projects the operator-managed

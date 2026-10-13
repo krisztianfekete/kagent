@@ -103,13 +103,19 @@ nodeSelector: {}
 
 database:
   postgres:
-    # -- Source the PostgreSQL connection string from a pre-created Secret.
+    # -- Secret holding the owner login's connection string. The owner creates the schema and runs
+    # migrations; it is not used when config.database.skipMigrations is true. Secret changes require restarting the controller.
+    ownerConnectionStringSecretRef:
+      name: kagent-postgres-owner
+      key: ownerConnectionString
+    # -- Secret holding the read/write login's connection string, used for every runtime query. Required.
     # Secret changes require restarting the controller.
-    connectionStringSecretRef:
-      name: kagent-postgres
-      key: connectionString
-    # -- Project the bundled PostgreSQL client certificate. The connection
-    # string must reference the files under /run/postgres.podcert.ate.dev.
+    readWriteConnectionStringSecretRef:
+      name: kagent-postgres-readwrite
+      key: readWriteConnectionString
+    # -- Project the bundled PostgreSQL client certificates for kagent_readwrite_user and, unless
+    # config.database.skipMigrations is true, kagent_owner_user.
+    # The connection strings must reference the files under /run/postgres.podcert.ate.dev.
     clientCertificate:
       enabled: false
 # ==============================================================================
@@ -145,7 +151,12 @@ config:
       mode: insecure
     grpcReflection: false
   database:
-    role: kagent_owner
+    # Role each login assumes after connecting. Set distinct roles for each install sharing a database.
+    # The owner applies migrations and is not used when skipMigrations is true.
+    owner:
+      role: kagent_owner
+    readWrite:
+      role: kagent_readwrite
     # PostgreSQL schema for Kagent tables and the shared pgvector extension.
     schema: kagent
     vectorSchema: extensions

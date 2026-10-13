@@ -283,11 +283,6 @@ Controller gRPC observability Grafana dashboard ConfigMap name.
 {{- printf "%s-controller-grpc-dashboard" (include "kagent.fullname" .) -}}
 {{- end -}}
 
-{{/* PostgreSQL connection Secret. */}}
-{{- define "kagent.postgres.connectionStringSecretName" -}}
-{{- .Values.database.postgres.connectionStringSecretRef.name -}}
-{{- end -}}
-
 {{/* Public A2A endpoint advertised by Session Agent Cards. */}}
 {{- define "kagent.a2aGatewayUrl" -}}
 {{- if .Values.config.gateway.publicUrl -}}
@@ -422,4 +417,9 @@ tag wins over the component tag.
 {{- $root := dict "registry" (.Values.ui.image.registry | default .Values.registry) "repository" .Values.ui.image.repository "tag" (coalesce .Values.tag .Values.ui.image.tag .Chart.Version) -}}
 {{- $global := dict "imageRegistry" (include "kagent.globalImageRegistry" .) -}}
 {{- include "kagent.images.image" (dict "imageRoot" $root "global" $global) -}}
+{{- end -}}
+
+{{/* "true" when the controller skips migrations and so needs no owner login. */}}
+{{- define "kagent.database.skipMigrations" -}}
+{{- if dig "database" "skipMigrations" false (.Values.config | default dict) -}}true{{- end -}}
 {{- end -}}
