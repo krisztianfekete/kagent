@@ -111,7 +111,7 @@ func TestNamespaceCache(t *testing.T) {
 
 func TestPostgresConfig(t *testing.T) {
 	input := &apiv1.DatabaseConfig{VectorEnabled: true, Schema: new("kagent_test"), VectorSchema: new("vectors_test"), Pool: &apiv1.PostgresPoolConfig{
-		MaxConns: new(int32(8)), MinConns: new(int32(1)), MaxConnIdleTime: durationpb.New(time.Minute), MaxConnLifetime: durationpb.New(10 * time.Minute),
+		MaxConns: new(int32(8)), MinConns: 1, MaxConnIdleTime: durationpb.New(time.Minute), MaxConnLifetime: durationpb.New(10 * time.Minute),
 	}}
 	pool := &pgxpool.Config{}
 	config := postgresConfig(input, pool)
@@ -179,6 +179,33 @@ func TestRunRejectsInvalidConfigBeforeIO(t *testing.T) {
 	cfg.Gateway.Push.SigningPrivateKeyFile = "missing-seed"
 	cfg.Sessions.QuiescenceRecoveryInterval = durationpb.New(0)
 	require.ErrorContains(t, Run(t.Context(), cfg, Options{}), "quiescence_recovery_interval")
+}
+
+func TestRunRejectsInvalidRuntimeTelemetryBeforeIO(t *testing.T) {
+	for _, endpoint := range []string{"http://:4317", "https://%20"} {
+		for _, test := range []struct {
+			name      string
+			telemetry *apiv1.TelemetryConfig
+		}{
+			{name: "traces", telemetry: &apiv1.TelemetryConfig{Traces: &apiv1.OTLPConfig{Endpoint: endpoint}}},
+			{name: "metrics", telemetry: &apiv1.TelemetryConfig{Metrics: &apiv1.OTLPConfig{Endpoint: endpoint}}},
+			{name: "logs", telemetry: &apiv1.TelemetryConfig{Logs: &apiv1.OTLPConfig{Endpoint: endpoint}}},
+		} {
+			t.Run(test.name+"/"+endpoint, func(t *testing.T) {
+				cfg := &apiv1.ControllerConfig{
+					Database: &apiv1.DatabaseConfig{
+						SkipMigrations: true,
+						ReadWrite: &apiv1.DatabaseLoginConfig{
+							UrlFile: filepath.Join(t.TempDir(), "missing-secret"), Role: "kagent_readwrite",
+						},
+					},
+					RuntimeDefaults: &apiv1.RuntimeDefaultsConfig{Telemetry: test.telemetry},
+				}
+				require.EqualError(t, Run(t.Context(), cfg, Options{}),
+					"runtimeDefaults: telemetry."+test.name+".endpoint must be an HTTP(S) URL")
+			})
+		}
+	}
 }
 
 // With migrations skipped the owner login is never read, so Run gets past its
