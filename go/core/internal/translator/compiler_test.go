@@ -72,9 +72,9 @@ func TestCompileAgentPreservesWorkloadOverrides(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tt.command, result.Command)
 			require.Equal(t, tt.args, result.Args)
-			var process adk.AgentConfig
-			require.NoError(t, json.Unmarshal(result.ConfigJSON, &process))
-			require.Equal(t, "80", process.Runtime.Port)
+			var process adk.Config
+			require.NoError(t, adk.Unmarshal(result.ConfigJSON, &process))
+			require.Equal(t, uint32(80), process.Runtime.GetPort())
 			for _, variable := range result.Environment {
 				require.NotEqual(t, "KAGENT_A2A_GRPC_ADDRESS", variable.Name)
 			}
@@ -161,23 +161,23 @@ func TestCompileAgentPinsAgentPluginSources(t *testing.T) {
 	}
 	require.Equal(t, harness.Spec.Workload.Command, spec.Command)
 	require.Equal(t, harness.Spec.Workload.Args, spec.Args)
-	var config adk.AgentConfig
-	if err := json.Unmarshal(spec.ConfigJSON, &config); err != nil {
+	var config adk.Config
+	if err := adk.Unmarshal(spec.ConfigJSON, &config); err != nil {
 		t.Fatal(err)
 	}
 	// The driver is part of the assertion, not incidental. The Python runtime opens
 	// this URL with an asyncio engine and refuses a bare `sqlite:` one, so dropping
 	// the driver leaves an actor that never serves /readyz — which surfaces as a
 	// harness stuck in ResumeGoldenActor rather than as anything naming this line.
-	if config.SessionDBURL != "sqlite+aiosqlite:////data/sessions.db" {
-		t.Fatalf("session DB URL = %q", config.SessionDBURL)
+	if config.Agent.SessionDbUrl != "sqlite+aiosqlite:////data/sessions.db" {
+		t.Fatalf("session DB URL = %q", config.Agent.SessionDbUrl)
 	}
-	if config.Memory == nil || config.Memory.TTLDays != 7 || config.Memory.Embedding == nil || config.Memory.Embedding.TLSInsecureSkipVerify == nil || !*config.Memory.Embedding.TLSInsecureSkipVerify {
-		t.Fatalf("compiled memory config = %#v", config.Memory)
+	if config.Agent.Memory == nil || config.Agent.Memory.TtlDays != 7 || config.Agent.Memory.Embedding == nil || config.Agent.Memory.Embedding.TlsInsecureSkipVerify == nil || !*config.Agent.Memory.Embedding.TlsInsecureSkipVerify {
+		t.Fatalf("compiled memory config = %#v", config.Agent.Memory)
 	}
-	plugins := config.AgentPlugins
-	if plugins == nil || len(plugins.Skills) != 2 || len(plugins.Plugins) != 2 || plugins.Plugins[0].Source.Git.Commit != "cccccccccccccccccccccccccccccccccccccccc" {
-		t.Fatalf("compiled Agent Plugins config = %#v", config)
+	plugins := config.Agent.AgentPlugins
+	if plugins == nil || len(plugins.Skills) != 2 || len(plugins.Plugins) != 2 || plugins.Plugins[0].Source.GetGit().Commit != "cccccccccccccccccccccccccccccccccccccccc" {
+		t.Fatalf("compiled Agent Plugins config = %#v", plugins)
 	}
 	for _, host := range []string{"https://ghcr.io:443", "https://registry-1.docker.io:443", "https://github.com:443", "https://objects.example.com:443"} {
 		if !slices.Contains(spec.EgressDestinations, host) {
@@ -387,18 +387,18 @@ func TestCompileAgentStructuredOutput(t *testing.T) {
 
 	revision, err := compiler(t, modelConfig(), configMap, child, harness).CompileAgent(t.Context(), inlineAgent(harness, root))
 	require.NoError(t, err)
-	var config adk.AgentConfig
-	require.NoError(t, json.Unmarshal(revision.ConfigJSON, &config))
-	require.JSONEq(t, schema, string(config.Output.JSONSchema))
-	require.Len(t, config.Output.SHA256, 64)
-	require.Len(t, config.SubAgents, 1)
-	require.Nil(t, config.SubAgents[0].Output)
-	require.Equal(t, 7, config.Memory.TTLDays)
-	require.Equal(t, 5, *config.ContextConfig.Compaction.CompactionInterval)
-	require.Equal(t, "sqlite+aiosqlite:////data/sessions.db", config.SessionDBURL)
-	require.Nil(t, config.SubAgents[0].Memory)
-	require.Nil(t, config.SubAgents[0].ContextConfig)
-	require.Empty(t, config.SubAgents[0].SessionDBURL)
+	var config adk.Config
+	require.NoError(t, adk.Unmarshal(revision.ConfigJSON, &config))
+	require.JSONEq(t, schema, string(config.Agent.Output.JsonSchema))
+	require.Len(t, config.Agent.Output.Sha256, 64)
+	require.Len(t, config.Agent.SubAgents, 1)
+	require.Nil(t, config.Agent.SubAgents[0].Output)
+	require.Equal(t, int64(7), config.Agent.Memory.TtlDays)
+	require.Equal(t, int64(5), *config.Agent.ContextConfig.Compaction.CompactionInterval)
+	require.Equal(t, "sqlite+aiosqlite:////data/sessions.db", config.Agent.SessionDbUrl)
+	require.Nil(t, config.Agent.SubAgents[0].Memory)
+	require.Nil(t, config.Agent.SubAgents[0].ContextConfig)
+	require.Empty(t, config.Agent.SubAgents[0].SessionDbUrl)
 	require.Contains(t, string(revision.Provenance), `"kind":"ConfigMap"`)
 	require.Equal(t, []string{"application/json"}, revision.AgentCard.DefaultOutputModes)
 }
@@ -680,28 +680,28 @@ func TestCompileAgentSharedADKConfig(t *testing.T) {
 			}
 			revision, err := compiler(t, modelConfig(), child, runtimeHarness, remoteMCPServer("search", "https://search.example.com/mcp")).CompileAgent(context.Background(), inlineAgent(runtimeHarness, root))
 			require.NoError(t, err)
-			var config adk.AgentConfig
-			require.NoError(t, json.Unmarshal(revision.ConfigJSON, &config))
-			require.Len(t, config.SubAgents, 1)
-			require.Equal(t, "web_researcher", config.SubAgents[0].Name)
-			require.Equal(t, "research the web", config.SubAgents[0].Description)
-			require.Equal(t, "research carefully", config.SubAgents[0].Instruction)
-			require.Equal(t, []string{"lookup"}, config.SubAgents[0].HttpTools[0].Tools)
-			require.Equal(t, "review", config.SubAgents[0].AgentPlugins.Skills[0].Name)
+			var config adk.Config
+			require.NoError(t, adk.Unmarshal(revision.ConfigJSON, &config))
+			require.Len(t, config.Agent.SubAgents, 1)
+			require.Equal(t, "web_researcher", config.Agent.SubAgents[0].Name)
+			require.Equal(t, "research the web", config.Agent.SubAgents[0].Description)
+			require.Equal(t, "research carefully", config.Agent.SubAgents[0].Instruction)
+			require.Equal(t, []string{"lookup"}, config.Agent.SubAgents[0].HttpTools[0].Tools)
+			require.Equal(t, "review", config.Agent.SubAgents[0].AgentPlugins.Skills[0].Name)
 			require.Contains(t, revision.EgressDestinations, "https://search.example.com:443")
 			require.Contains(t, revision.EgressDestinations, "https://ghcr.io:443")
 			require.Contains(t, string(revision.Provenance), `"name":"researcher"`)
 
-			require.Equal(t, "coordinate", config.Instruction)
-			require.NotNil(t, config.Model)
-			require.True(t, config.GetStream())
-			require.Equal(t, "review", config.AgentPlugins.Skills[0].Name)
-			require.Equal(t, "https://github.com/acme/plugin", config.AgentPlugins.Plugins[0].Source.Git.URL)
-			require.Equal(t, "sqlite+aiosqlite:////data/sessions.db", config.SessionDBURL)
-			require.Empty(t, config.SubAgents[0].SessionDBURL)
-			require.Nil(t, config.Memory)
-			require.Nil(t, config.ContextConfig)
-			require.Nil(t, config.Output)
+			require.Equal(t, "coordinate", config.Agent.Instruction)
+			require.NotNil(t, config.Agent.Model)
+			require.True(t, config.Agent.GetStream())
+			require.Equal(t, "review", config.Agent.AgentPlugins.Skills[0].Name)
+			require.Equal(t, "https://github.com/acme/plugin", config.Agent.AgentPlugins.Plugins[0].Source.GetGit().Url)
+			require.Equal(t, "sqlite+aiosqlite:////data/sessions.db", config.Agent.SessionDbUrl)
+			require.Empty(t, config.Agent.SubAgents[0].SessionDbUrl)
+			require.Nil(t, config.Agent.Memory)
+			require.Nil(t, config.Agent.ContextConfig)
+			require.Nil(t, config.Agent.Output)
 			if commonConfig == nil {
 				commonConfig = revision.ConfigJSON
 			} else {
@@ -947,8 +947,8 @@ func TestCompileAgentRuntimeIdentity(t *testing.T) {
 						result, err := c.CompileAgent(t.Context(), agent)
 						require.NoError(t, err)
 						if kind == translator.HarnessTypeKagent || kind == translator.HarnessTypeBYO {
-							var cfg adk.AgentConfig
-							require.NoError(t, json.Unmarshal(result.ConfigJSON, &cfg))
+							var cfg adk.Config
+							require.NoError(t, adk.Unmarshal(result.ConfigJSON, &cfg))
 							require.Equal(t, name, cfg.Runtime.Name)
 							require.Equal(t, agent.Namespace, cfg.Runtime.Namespace)
 						} else {
@@ -961,9 +961,9 @@ func TestCompileAgentRuntimeIdentity(t *testing.T) {
 						}
 						require.Equal(t, strings.ReplaceAll(name, "-", "_"), result.AgentCard.Name)
 						if kind == translator.HarnessTypeKagent {
-							var config adk.AgentConfig
-							require.NoError(t, json.Unmarshal(result.ConfigJSON, &config))
-							require.NotNil(t, config.Memory)
+							var config adk.Config
+							require.NoError(t, adk.Unmarshal(result.ConfigJSON, &config))
+							require.NotNil(t, config.Agent.Memory)
 						}
 					})
 				}

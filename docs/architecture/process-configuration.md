@@ -128,8 +128,14 @@ Configuration changes require a process restart.
 
 ## Runtimes
 
-Runtime configuration remains the existing Go/JSON contract. ADK and BYO
-process settings live in the root `runtime` object; subagents inherit them.
+ADK and BYO configuration uses `ADKConfig` from
+[`adk.proto`](../../proto/kagent/api/v1alpha1/adk.proto), serialized as ProtoJSON
+in `config.json`. Go and Python consume generated messages and enforce the
+same Protovalidate rules. Agent, model, tool, memory, compaction, plugin, and
+process settings have one schema. Process settings live in the root `runtime`
+object. Agent behavior lives under `agent`, whose recursive `sub_agents`
+contain only `ADKAgentConfig` messages. Runtime fields cannot be set on any
+agent node; the entire tree shares the top-level process settings.
 Native Claude and Codex retain their harness-specific Go structs. The controller
 compiles `runtimeDefaults` into these payloads independently of its own settings.
 
@@ -141,17 +147,46 @@ compiles `runtimeDefaults` into these payloads independently of its own settings
     "name": "researcher",
     "namespace": "kagent",
     "log_level": "info",
-    "port": "80",
-    "max_content_length": 0,
+    "port": 80,
+    "max_content_length": "0",
     "file_search_tools": false,
     "token_propagation": {"enabled": false}
   }
 }
 ```
 
+Models select exactly one provider, for example:
+
+```json
+{"agent": {"model": {"model": "gpt-4o", "openai": {"temperature": 0}}}}
+```
+
+Provider-specific fields live inside the selected provider; shared transport
+settings remain beside `model`. ProtoJSON accepts snake_case and camelCase
+field names and emits 64-bit integers as strings. Optional fields preserve an
+explicit false or zero. Listener ports use `uint32` (1–65535), so they emit JSON
+numbers; absent ports retain the runtime default. Body limits remain `int64` to
+match the HTTP API, with zero meaning unlimited. Model and MCP timeouts use
+protobuf durations (for example, `"0.250s"`), preserving fractional seconds.
+Durations must be positive and fit Go `time.Duration`; count fields are bounded
+where downstream SDKs require narrower integers. Kagent-owned model counts and
+seeds retain `int64` through the Go SDK boundary. Structured output carries canonical schema bytes as
+base64 so its SHA-256 still identifies the exact bytes. Bedrock
+`additional_model_request_fields` also carries raw JSON bytes as base64, preserving
+provider integer values without conversion to floating point.
+
+This is a complete cutover from the previous `model.type` JSON discriminator;
+runtime images and controller payloads must use the same contract. BYO images
+using the kagent ADK must use the Go or Python ADK from the same release (or
+source revision for development builds) as the controller. Rebuild these images
+when updating the controller; mixed controller/ADK versions are not supported. Unknown
+fields and multiple model providers fail configuration loading. Telemetry uses
+the same `TelemetryConfig` as controller settings (including protobuf durations).
+
 An absent request size limit uses the runtime default; zero means unlimited.
 Python integrations load this document with `KAgentConfig.from_file()` or receive
-an explicit `RuntimeConfig`. Managed processes still materialize the private
+an explicit generated `RuntimeConfig`. Python ADK loads the full document with
+`parse_config()` and constructs the SDK agent with `create_agent()`. Managed processes still materialize the private
 `KAGENT_CONFIG_JSON` and `KAGENT_AGENT_CARD_JSON` payloads supplied by Substrate.
 Actor/session identity, credential projection, and private bootstrap paths keep
 their existing contracts. Substrate's limits remain 32 environment entries and
