@@ -48,7 +48,7 @@ jobs:
         sandbox_class: [gvisor, microvm]
     env:
       VERSION: v0.0.1-test
-      SUBSTRATE_VERSION: 0.5.0-alpha2
+      SUBSTRATE_VERSION: 0.6.0-alpha3
       KIND_SANDBOX_CLASS: ${{ matrix.sandbox_class }}
       # Bound runtime concurrency separately from the runner's build capacity.
       E2E_PARALLEL: ${{ inputs.e2e_parallel || '4' }}
@@ -178,7 +178,7 @@ jobs:
             create: true
             replicas: 4
             sandboxClass: ${{ matrix.sandbox_class }}
-            workerImage: ghcr.io/kagent-dev/substrate/ateom-${{ matrix.sandbox_class }}:v${{ env.SUBSTRATE_VERSION }}
+            workerImage: ghcr.io/kagent-dev/substrate/ateworker-${{ matrix.sandbox_class }}:v${{ env.SUBSTRATE_VERSION }}
           EOF
           cat > "$RUNNER_TEMP/substrate-values.yaml" <<EOF
           atelet:

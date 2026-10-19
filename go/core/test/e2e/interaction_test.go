@@ -1462,8 +1462,8 @@ func (r *modelRecorder) Requests(header, value string) []recordedModelRequest {
 	return matched
 }
 
-// Gateway credential rules match DNS names. Give host-based mocks a cluster
-// service name without depending on public DNS or changing the gateway config.
+// Gateway credential rules match DNS names. Give host-based mocks a full
+// cluster service name without depending on public DNS or changing the gateway.
 func mockOriginService(t *testing.T, address, port string) string {
 	t.Helper()
 	number, err := strconv.ParseInt(port, 10, 32)
