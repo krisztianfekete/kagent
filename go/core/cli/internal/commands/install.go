@@ -480,7 +480,8 @@ A database that kagent install did not deploy, such as one used with
 }
 
 // substrateInstallValues configures per-template snapshot storage and grants the
-// controller access to Substrate. Explicit values files override defaults.
+// controller and kubectl ate access to Substrate. Explicit values files override defaults.
+// An explicit owner list replaces the chart's default ate-client grant.
 func substrateInstallValues(namespace, serviceAccount string) string {
 	return fmt.Sprintf(`preview:
   - PerTemplateSnapshotLocation
@@ -488,6 +489,7 @@ ateApi:
   authorization:
     bootstrapOwners:
       - %s
+      - "system:serviceaccount:ate-system:ate-client"
 credentialProvider:
   namespacePolicies:
     - atespace: %s
